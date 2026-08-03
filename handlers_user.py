@@ -724,9 +724,22 @@ async def balance(c: CallbackQuery, state: FSMContext):
 async def deposit_amount(c: CallbackQuery, state: FSMContext):
     """Rails that need a figure up front (Stars, UPI)."""
     code = c.data.split(":")[1]
+    prov = payments.get(code)
     await state.clear()
-    await show(c, f"How much would you like to add?\nChoose or type an amount in "
-                  f"{cfg.fiat}.", k.deposit_amount_kb(code))
+
+    # Say which currency this rail actually moves. Amounts are chosen in the
+    # shop currency, but UPI settles in rupees and the chains in USDT — showing
+    # the conversion here stops the invoice being a surprise.
+    note = ""
+    if prov:
+        sample, unit = prov.quote(10.0)
+        if unit.upper() != cfg.fiat.upper() and sample:
+            note = (f"\n\n<i>{prov.title} settles in {esc(unit)} — "
+                    f"{cfg.money(10)} is about {sample:g} {esc(unit)}.</i>")
+    await show(c, f"{prov.title if prov else 'Deposit'}\n\n"
+                  f"How much would you like to add?\n"
+                  f"Choose or type an amount in <b>{cfg.fiat}</b>.{note}",
+               k.deposit_amount_kb(code))
     await c.answer()
 
 
