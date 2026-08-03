@@ -751,22 +751,33 @@ def build_app(bot: Bot) -> web.Application:
     r.add_get("/health", lambda _: web.Response(text="ok"))
 
     async def _build(_req):
-        """Which copy of the front end is actually being served."""
+        """Which copy of the code is actually running.
+
+        Derived from the newest source file rather than a stamp someone has to
+        remember to bump — a version marker that can silently go stale is worse
+        than none, because it makes a stale deploy look current.
+        """
         import re as _re
-        html = (STATIC / "shop.html").read_text(encoding="utf-8")
-        m = _re.search(r"__buildStamp = '([^']+)'", html)
+        import pathlib
+        import time as _time
         import flair as _flair
         import handlers_admin as _ha
         import handlers_user as _hu
+
+        root = pathlib.Path(__file__).parent
+        files = list(root.glob("*.py")) + list(STATIC.iterdir())
+        newest = max((f.stat().st_mtime for f in files), default=0)
         cmds = sorted({
             c for mod in (_ha, _hu)
             for c in _re.findall(r'Command\("(\w+)"\)',
                                  open(mod.__file__, encoding="utf-8").read())})
         return web.json_response({
+            "build": _time.strftime("%Y%m%d-%H%M", _time.gmtime(newest)),
+            "newest_file": max(files, key=lambda f: f.stat().st_mtime).name,
             "commands": cmds,
-            "build": m.group(1) if m else "unknown",
             "icon_slots": len(_flair.SLOTS_META),
-            "per_button_icons": "menu_shop" in _flair.SLOTS_META,
+            "messages": __import__("texts").MESSAGES.__len__(),
+            "rails": sorted(p.code for p in __import__("payments").enabled()),
             "files": sorted(p.name for p in STATIC.iterdir()),
         })
     r.add_get("/build", _build)
