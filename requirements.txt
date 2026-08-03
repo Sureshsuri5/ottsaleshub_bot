@@ -1,0 +1,6 @@
+aiogram>=3.30,<4   # 3.30+ carries Bot API 9.4 button style/icon fields
+aiosqlite>=0.20
+aiohttp>=3.9
+python-dotenv>=1.0
+qrcode[pil]>=7.4
+tzdata>=2024.1   # zoneinfo needs this on Windows

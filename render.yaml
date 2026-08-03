@@ -1,0 +1,30 @@
+# Render Blueprint — push this repo to GitHub, then New → Blueprint.
+# Free web services sleep after ~15 min idle; the first Telegram update after a
+# sleep wakes it and Telegram retries, so nothing is lost, just delayed once.
+services:
+  - type: web
+    name: telegram-shop
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: BOT_TOKEN
+        sync: false          # paste in the dashboard, never in git
+      - key: ADMIN_IDS
+        sync: false
+      - key: ADMIN_PANEL_TOKEN
+        generateValue: true
+      - key: BOT_MODE
+        value: webhook
+      - key: ENABLED_PROVIDERS
+        value: balance,stars
+      - key: FIAT_CURRENCY
+        value: INR
+      - key: CURRENCY_SYMBOL
+        value: "₹"
+      - key: DB_PATH
+        value: /data/shop.db
+    disk:                    # free plan has no disk — delete this block if so,
+      name: shopdata         # and accept that data resets on redeploy
+      mountPath: /data
+      sizeGB: 1

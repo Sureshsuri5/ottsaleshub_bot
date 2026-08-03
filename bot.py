@@ -1,0 +1,259 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+import secrets
+from typing import Any, Awaitable, Callable
+
+from aiogram import BaseMiddleware, Bot, Dispatcher, F
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ChatType, ParseMode
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import (CallbackQuery, ErrorEvent, Message,
+                           TelegramObject, Update)
+from aiogram.types import (BotCommand, BotCommandScopeChat,
+                           BotCommandScopeAllPrivateChats, MenuButtonWebApp,
+                           MenuButtonCommands, WebAppInfo)
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+
+import db
+import flair
+import handlers_admin
+import handlers_group
+import handlers_user
+import watcher
+import webapp
+from config import cfg
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
+)
+log = logging.getLogger("shopbot")
+
+
+class BanMiddleware(BaseMiddleware):
+    """Registers every user and blocks banned ones before handlers run."""
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: Update,
+        data: dict[str, Any],
+    ) -> Any:
+        user = data.get("event_from_user")
+        if user and not user.is_bot:
+            row = await db.upsert_user(user.id, user.username, user.first_name)
+            if row["is_banned"] and not cfg.is_admin(user.id):
+                inner = event.event
+                if isinstance(inner, CallbackQuery):
+                    await inner.answer("You are banned from this shop.", show_alert=True)
+                elif isinstance(inner, Message):
+                    import texts
+                    await inner.answer(await texts.t("banned"))
+                return None
+        return await handler(event, data)
+
+
+EMOJI_ERRORS = ("custom_emoji", "emoji", "icon")
+
+
+async def on_error(event: ErrorEvent) -> bool:
+    """aiogram hands this a single ErrorEvent carrying the update and the error."""
+    exception = event.exception
+    msg = str(exception).lower()
+
+    # Telegram refuses button icons unless the bot owner has Premium (or the bot
+    # owns a Fragment username). Drop icons for the rest of the run rather than
+    # letting a Buy button fail.
+    if any(w in msg for w in EMOJI_ERRORS) and "not found" not in msg:
+        flair.disable_icons(str(exception))
+        return True
+
+    # Anything else is a real bug. Log it and tell the admin who hit it, rather
+    # than leaving them tapping a command that silently does nothing.
+    log.exception("unhandled update error: %s", exception)
+    try:
+        upd = event.update
+        inner = upd.message or upd.callback_query
+        user = inner.from_user if inner else None
+        if user and cfg.is_admin(user.id):
+            # to the admin privately — never back into whatever chat it happened in
+            await upd.bot.send_message(
+                user.id,
+                "⚠️ That action failed:\n"
+                f"<code>{type(exception).__name__}: {str(exception)[:300]}</code>")
+    except Exception:
+        pass
+    return True
+
+
+def build_dispatcher() -> Dispatcher:
+    dp = Dispatcher(storage=MemoryStorage())
+    dp.errors.register(on_error)
+    dp.update.middleware(BanMiddleware())
+    # The shop is a private-chat experience. In a group the bot only posts the
+    # sales feed, and a menu carrying a Mini App button is rejected there
+    # outright (BUTTON_TYPE_INVALID), so don't answer group messages at all.
+    for r in (handlers_admin.router, handlers_user.router):
+        r.message.filter(F.chat.type == ChatType.PRIVATE)
+        r.callback_query.filter(F.message.chat.type == ChatType.PRIVATE)
+
+    dp.include_router(handlers_admin.router)   # admin first: its filter narrows it
+    dp.include_router(handlers_user.router)
+    dp.include_router(handlers_group.router)   # groups: product mentions only
+    return dp
+
+
+USER_COMMANDS = [
+    ("start", "Open the shop"),
+    ("menu", "Main menu"),
+    ("order", "Look up an order by its ID"),
+]
+ADMIN_COMMANDS = USER_COMMANDS + [
+    ("admin", "Admin panel"),
+    ("status", "Bot status and diagnostics"),
+    ("check", "Test a transaction hash"),
+    ("texts", "Edit bot messages"),
+    ("flair", "Button icons"),
+    ("ids", "Get sticker / emoji ids"),
+]
+
+
+async def _publish_commands(bot: Bot) -> None:
+    try:
+        await bot.set_my_commands(
+            [BotCommand(command=c, description=d) for c, d in USER_COMMANDS],
+            scope=BotCommandScopeAllPrivateChats())
+        for admin_id in cfg.admin_ids:
+            await bot.set_my_commands(
+                [BotCommand(command=c, description=d) for c, d in ADMIN_COMMANDS],
+                scope=BotCommandScopeChat(chat_id=admin_id))
+    except Exception as e:
+        log.warning("could not publish the command list: %s", e)
+
+
+async def _publish_menu_button(bot: Bot) -> None:
+    """Put the shop on the blue button beside the message box.
+
+    Only when the URL is public https — Telegram rejects anything else, and a
+    failed call would leave whatever was set before in place.
+    """
+    try:
+        if cfg.miniapps_live:
+            await bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(
+                    text=cfg.shop_name[:16] or "Shop",
+                    web_app=WebAppInfo(url=cfg.webapp_url)))
+            log.info("menu button now opens the Mini App")
+        else:
+            await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+    except Exception as e:
+        log.warning("could not set the menu button: %s", e)
+
+
+async def main() -> None:
+    if not cfg.bot_token:
+        raise SystemExit("BOT_TOKEN is missing — copy .env.example to .env and fill it in.")
+    if not cfg.admin_ids:
+        log.warning("ADMIN_IDS is empty — nobody can open the admin panel.")
+
+    await db.init(cfg.db_path)
+    filled = await db.backfill_codes()
+    if filled:
+        log.info('assigned reference codes to %s existing order(s)', filled)
+
+    # Link previews are off by default: a channel or group link in the welcome
+    # text would otherwise render a large preview card that pushes the buttons
+    # off screen. Individual sends can still opt back in.
+    bot = Bot(cfg.bot_token, default=DefaultBotProperties(
+        parse_mode=ParseMode.HTML, link_preview_is_disabled=True))
+    dp = build_dispatcher()
+
+    me = await bot.get_me()
+    flair.BOT_USERNAME = me.username or ""
+    await flair.reload()
+    import payments
+    await payments.reload_rails()
+
+    # Publish the command list. Typing "/" then shows exactly what this build
+    # supports — the fastest way to spot that an old copy is running.
+    await _publish_commands(bot)
+    await _publish_menu_button(bot)
+
+    tasks = [asyncio.create_task(watcher.run(bot))]
+    app = webapp.build_app(bot) if cfg.webapp_enabled else None
+    runner = None
+
+    import payments
+    live = [p.code for p in payments.enabled()]
+    log.info("running as @%s | providers: %s | mode: %s",
+             me.username, ", ".join(live) or "none", "webhook" if cfg.use_webhook else "polling")
+    warn = cfg.rate_warning()
+    if warn:
+        log.warning("=" * 68)
+        log.warning("CHECK YOUR CONFIG: %s", warn)
+        log.warning("=" * 68)
+
+    await payments.probe()   # warms plan/RPC state; failures surface in /check
+    for r in payments.status():
+        if r.get("manual_only"):
+            log.warning("rail '%s' works but cannot auto-verify on your current "
+                        "API plan — payments there need manual approval", r["code"])
+        elif r.get("via") == "node":
+            log.info("rail '%s' verifies via a public %s node "
+                     "(explorer plan doesn't cover this chain)",
+                     r["code"], r["title"].split()[-1])
+    for code in payments.misconfigured():
+        log.warning("payment rail '%s' is enabled but has no address/account set — "
+                    "hidden until you configure it", code)
+    if cfg.webapp_enabled and not cfg.miniapps_live:
+        log.warning("WEBAPP_URL is not a public https:// address — Mini App buttons are "
+                    "hidden and the bot falls back to the inline admin panel.")
+
+    try:
+        if cfg.use_webhook:
+            if app is None:
+                raise SystemExit("Webhook mode needs WEBAPP_ENABLED=true.")
+            # Secret path + Telegram's own secret header: two independent checks that
+            # an update really came from Telegram and not from someone port-scanning.
+            secret = cfg.webhook_secret_tg or secrets.token_urlsafe(24)
+            path = f"/tg/{secrets.token_hex(8)}" if not cfg.webhook_secret_tg else "/tg/updates"
+            SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=secret).register(app, path)
+            setup_application(app, dp, bot=bot)
+            runner = await webapp.serve(app)
+            try:
+                await bot.set_webhook(
+                    f"{cfg.webapp_url}{path}", secret_token=secret,
+                    drop_pending_updates=True,
+                    allowed_updates=dp.resolve_used_update_types())
+            except Exception as e:
+                # A dead tunnel or a typo in WEBAPP_URL shouldn't take the bot
+                # down — long polling needs no inbound address, so use it.
+                log.error("could not register the webhook at %s: %s", cfg.webapp_url, e)
+                log.warning("falling back to polling. Set BOT_MODE=polling to make this "
+                            "the default, or fix WEBAPP_URL to a reachable https address.")
+                await bot.delete_webhook(drop_pending_updates=True)
+                await dp.start_polling(bot)
+            else:
+                log.info("webhook registered at %s%s", cfg.webapp_url, path)
+                await asyncio.Event().wait()      # serve until the platform stops us
+        else:
+            if app is not None:
+                runner = await webapp.serve(app)
+            await bot.delete_webhook(drop_pending_updates=True)
+            await dp.start_polling(bot)
+    finally:
+        for t in tasks:
+            t.cancel()
+        if runner:
+            await runner.cleanup()
+        await db.close()
+        await bot.session.close()
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        pass

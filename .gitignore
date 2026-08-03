@@ -1,0 +1,23 @@
+# Secrets — never commit these
+.env
+*.env
+!.env.example
+
+# Database
+*.db
+*.db-wal
+*.db-shm
+data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+tunnel.log

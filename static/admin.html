@@ -1,0 +1,716 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Admin</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="stylesheet" href="/static/app.css">
+<script>
+/* Classic (non-module) script, loaded first on purpose: a syntax error inside a
+   module aborts before any module code runs, so only a listener registered out
+   here can report it. Without this the page just goes blank. */
+(function () {
+  var shown = false;
+  function fatal(msg, where) {
+    if (shown) return;
+    shown = true;
+    var v = document.getElementById('view');
+    if (!v) return;
+    v.innerHTML =
+      '<div class="empty"><b>This screen failed to load</b>' +
+      '<div style="text-align:left;font-family:ui-monospace,monospace;font-size:12px;' +
+      'margin-top:12px;padding:12px;border-radius:10px;background:rgba(229,72,77,.12);' +
+      'color:#E5484D;word-break:break-word">' + String(msg) +
+      (where ? '<br><br>' + where : '') + '</div>' +
+      '<div style="margin-top:14px;font-size:13px">Send this text to whoever maintains ' +
+      'the bot — it names the exact file and line.</div></div>';
+  }
+  window.addEventListener('error', function (e) {
+    fatal(e.message, (e.filename || '') + (e.lineno ? ':' + e.lineno : ''));
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    fatal((e.reason && e.reason.message) || e.reason, 'unhandled promise');
+  });
+  window.__buildStamp = '20260802-1521';
+})();
+</script>
+
+</head>
+<body>
+<div class="wrap" id="view"></div>
+
+<nav class="tabs">
+  <button data-tab="home"    class="sel"><span>📊</span>Today</button>
+  <button data-tab="catalog"><span>📦</span>Catalog</button>
+  <button data-tab="orders"><span>🧾</span>Orders</button>
+  <button data-tab="users"><span>👤</span>Users</button>
+  <button data-tab="more"><span>⚙️</span>More</button>
+</nav>
+
+<script type="module">
+import { tg, boot, api, toast, copy, haptic, esc, money, setSymbol, gauge, inTelegram,
+         statusPill, pushScreen, replaceScreen, refresh } from '/static/tg.js';
+
+boot();
+const view = document.getElementById('view');
+let me = null, threshold = 3;
+const html = (s) => { view.innerHTML = s; };
+const loading = () => html('<div class="skeleton"></div>'.repeat(4));
+const on = (sel, ev, fn) => view.querySelector(sel)?.addEventListener(ev, fn);
+
+document.querySelectorAll('.tabs button').forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('sel', x === b));
+    haptic();
+    ({ home: homeView, catalog: catalogView, orders: ordersView,
+       users: usersView, more: moreView })[b.dataset.tab]();
+  };
+});
+
+async function init() {
+  loading();
+  try {
+    me = await api('/me');
+    setSymbol(me.symbol);
+    if (!me.admin) throw new Error('This account is not an admin.');
+    homeView();
+  } catch (e) {
+    const browser = !inTelegram();
+    html(`<div class="empty">
+      <b>${browser ? 'Open this from Telegram' : 'No access'}</b>
+      ${browser
+        ? `This admin panel signs you in with your Telegram account, so it needs to be
+           opened from the bot.<br><br>To use it in a browser instead, set
+           <code>ADMIN_PANEL_TOKEN</code> in <code>.env</code> and add
+           <code>?token=YOUR_TOKEN</code> to this URL.`
+        : esc(e.message)}
+    </div>`);
+  }
+}
+
+/* ------------------------------------------------------------------ today */
+function homeView() {
+  replaceScreen(async () => {
+    loading();
+    const s = await api('/admin/stats');
+    threshold = s.threshold;
+    const peak = Math.max(1, ...s.series.map((d) => d.s));
+    html(`
+      <h1>Today</h1>
+      <p class="sub">${esc(me.shop)}</p>
+
+      <div class="card">
+        <div class="tiny muted">Revenue today</div>
+        <div class="num" style="font-size:32px;font-weight:700;letter-spacing:-.02em">
+          ${money(s.rev_today)}</div>
+        <div class="small muted">${money(s.rev_all)} all time · ${s.orders} delivered</div>
+        <div class="row" style="gap:3px;height:44px;align-items:flex-end;margin-top:14px">
+          ${s.series.map((d) => `<div title="${d.d}: ${money(d.s)}" style="flex:1;
+            height:${Math.max(4, (d.s / peak) * 100)}%;background:var(--jade);
+            border-radius:2px;opacity:${d.s ? 1 : .25}"></div>`).join('') ||
+            '<span class="small muted">No sales in the last 14 days</span>'}
+        </div>
+      </div>
+
+      <div class="row" style="gap:10px">
+        <div class="card grow"><div class="tiny muted">Users</div>
+          <div class="num" style="font-size:22px;font-weight:700">${s.users}</div></div>
+        <div class="card grow"><div class="tiny muted">Open orders</div>
+          <div class="num" style="font-size:22px;font-weight:700;
+            color:${s.pending ? 'var(--amber)' : 'inherit'}">${s.pending}</div></div>
+        <div class="card grow"><div class="tiny muted">Stock units</div>
+          <div class="num" style="font-size:22px;font-weight:700">${s.in_stock}</div></div>
+      </div>
+
+      ${(s.alerts?.withdrawals || s.alerts?.reviews) ? `
+        <h2>Needs you</h2>
+        ${s.alerts.withdrawals ? `
+          <div class="card" data-go="wd" role="button" tabindex="0"
+               style="border-color:var(--amber)">
+            <div class="between">
+              <b>💸 ${s.alerts.withdrawals} withdrawal request${
+                s.alerts.withdrawals === 1 ? '' : 's'}</b>
+              <span class="num">${money(s.alerts.withdraw_total)}</span>
+            </div>
+            <div class="small muted" style="margin-top:4px">Tap to review and pay out</div>
+          </div>` : ''}
+        ${s.alerts.reviews ? `
+          <div class="card" data-go="reviews" role="button" tabindex="0"
+               style="border-color:var(--amber)">
+            <div class="between"><b>🔎 ${s.alerts.reviews} payment${
+              s.alerts.reviews === 1 ? '' : 's'} awaiting review</b>
+              <span class="muted">›</span></div>
+          </div>` : ''}` : ''}
+
+      ${s.low.length ? `
+        <h2>Running low</h2>
+        ${s.low.map((p) => `<div class="card">
+          <div class="between"><b class="trunc">${esc(p.name)}</b>
+            <span class="num" style="color:${p.c ? 'var(--amber)' : 'var(--rose)'}">${p.c}</span></div>
+          ${gauge(p.c, 0, threshold)}
+        </div>`).join('')}` : ''}`);
+    view.querySelector('[data-go="wd"]')?.addEventListener('click', withdrawalsView);
+    view.querySelector('[data-go="reviews"]')?.addEventListener('click',
+      () => ordersView('open'));
+  });
+}
+
+/* ----------------------------------------------------------- withdrawals */
+function withdrawalsView() {
+  pushScreen(async () => {
+    loading();
+    const { pending } = await api('/admin/withdrawals');
+    if (!pending.length) {
+      return html(`<h1>Withdrawals</h1>
+        <div class="empty"><b>Nothing waiting</b>Requests appear here the moment a
+        user asks to cash out.</div>`);
+    }
+    html(`<h1>Withdrawals</h1>
+      <p class="sub">${pending.length} waiting. The amount is held, not yet deducted —
+        it comes off their balance only when you mark it paid.</p>
+      ${pending.map((w) => `
+        <div class="card">
+          <div class="between">
+            <b class="num">${money(w.amount)}</b>
+            <span class="pill wait">${esc(w.method)}</span>
+          </div>
+          <div class="small muted" style="margin-top:6px">
+            ${esc(w.name)} ${w.username ? '@' + esc(w.username) : ''}
+            · <span class="num">${w.user_id}</span>
+            · balance ${money(w.balance)}
+          </div>
+          <div class="keys" style="margin-top:8px">${esc(w.address)}</div>
+          <div class="row" style="gap:8px;margin-top:10px">
+            <button class="mini" data-act="paid" data-id="${w.id}">Mark paid</button>
+            <button class="ghost mini" data-act="rejected" data-id="${w.id}">Reject</button>
+            <button class="ghost mini" data-cp="${esc(w.address)}">Copy address</button>
+          </div>
+        </div>`).join('')}`);
+
+    view.querySelectorAll('[data-cp]').forEach((b) =>
+      b.onclick = () => copy(b.dataset.cp, 'Address copied'));
+    view.querySelectorAll('[data-act]').forEach((b) => b.onclick = async () => {
+      const paying = b.dataset.act === 'paid';
+      confirmDelete(paying ? 'Mark this payout as sent?' : 'Reject this request?',
+        paying ? 'The amount comes off their balance now. Send the funds first.'
+               : 'Their balance is left untouched and the hold is released.',
+        async () => {
+          b.disabled = true;
+          try {
+            await api('/admin/withdrawals', { method: 'POST',
+              body: { id: Number(b.dataset.id), action: b.dataset.act } });
+            toast(paying ? 'Marked paid' : 'Rejected');
+            refresh();
+          } catch (e) { toast(e.message, 'err'); b.disabled = false; }
+        });
+    });
+  });
+}
+
+/* ---------------------------------------------------------------- catalog */
+function catalogView() {
+  replaceScreen(async () => {
+    loading();
+    const cats = await api('/admin/catalog');
+    html(`
+      <h1>Catalog</h1>
+      <p class="sub">Tap a product to edit it or add stock.</p>
+      ${cats.map((c) => `
+        <div class="between" style="margin:20px 0 8px">
+          <h2 style="margin:0">${esc(c.name)}</h2>
+          <div class="row">
+            <button class="ghost mini" data-addp="${c.id}">+ Product</button>
+            <button class="ghost mini" data-delc="${c.id}" aria-label="Delete category">🗑</button>
+          </div>
+        </div>
+        ${c.products.length ? c.products.map((p) => `
+          <div class="card" data-p="${p.id}" role="button" tabindex="0">
+            <div class="between">
+              <div class="grow trunc">
+                <b>${esc(p.emoji || '')} ${esc(p.name)}</b>
+                ${p.is_active ? '' : '<span class="pill neutral">Hidden</span>'}
+              </div>
+              <span class="num">${money(p.price)}</span>
+            </div>
+            ${gauge(p.stock, p.infinite, threshold)}
+            <div class="between small muted" style="margin-top:6px">
+              <span>${p.infinite ? 'Unlimited' : `${p.stock} in stock`}</span>
+              <span class="num">${p.sold_count} sold</span>
+            </div>
+          </div>`).join('')
+          : `<div class="card small muted">No products here yet.</div>`}
+      `).join('')}
+      <label>New category</label>
+      <div class="row"><input id="newcat" placeholder="e.g. Ebooks">
+        <button class="mini" id="addcat">Add</button></div>`);
+
+    view.querySelectorAll('[data-p]').forEach((el) =>
+      el.onclick = () => productView(Number(el.dataset.p)));
+    view.querySelectorAll('[data-addp]').forEach((el) =>
+      el.onclick = (e) => { e.stopPropagation(); newProduct(Number(el.dataset.addp)); });
+    view.querySelectorAll('[data-delc]').forEach((el) =>
+      el.onclick = (e) => { e.stopPropagation(); confirmDelete(
+        'Delete this category?', 'Its products and all their stock go too.',
+        async () => { await api(`/admin/category/${el.dataset.delc}`, { method: 'DELETE' });
+                      toast('Category deleted'); catalogView(); }); });
+    on('#addcat', 'click', async () => {
+      const name = view.querySelector('#newcat').value.trim();
+      try { await api('/admin/category', { method: 'POST', body: { name } });
+            toast('Category added'); catalogView(); }
+      catch (e) { toast(e.message, 'err'); }
+    });
+  });
+}
+
+function newProduct(cid) {
+  pushScreen(() => {
+    html(`<h1>New product</h1><p class="sub">You can add stock right after saving.</p>
+      <label>Name</label><input id="n" placeholder="Python Masterclass">
+      <label>Description</label><textarea id="d" style="min-height:70px"
+        placeholder="What the buyer receives"></textarea>
+      <label>Price (${esc(me.currency)})</label><input id="p" inputmode="decimal" placeholder="249">
+      <button id="save" style="margin-top:14px">Save product</button>`);
+    on('#save', 'click', async (e) => {
+      e.target.disabled = true;
+      try {
+        const r = await api('/admin/product', { method: 'POST', body: {
+          category_id: cid, name: view.querySelector('#n').value.trim(),
+          description: view.querySelector('#d').value.trim(),
+          price: view.querySelector('#p').value } });
+        toast('Product saved');
+        productView(r.id);
+      } catch (err) { toast(err.message, 'err'); e.target.disabled = false; }
+    });
+  });
+}
+
+function productView(pid) {
+  pushScreen(async () => {
+    loading();
+    const cats = await api('/admin/catalog');
+    const p = cats.flatMap((c) => c.products).find((x) => x.id === pid);
+    if (!p) return toast('Product is gone', 'err');
+
+    html(`
+      <h1>${esc(p.name)}</h1>
+      <p class="sub num">id ${p.id} · ${p.sold_count} sold</p>
+
+      <div class="card">
+        ${gauge(p.stock, p.infinite, threshold)}
+        <div class="between small" style="margin-top:8px">
+          <span class="muted">${p.infinite ? 'Unlimited delivery' : `${p.stock} units ready`}</span>
+          <span class="pill ${p.is_active ? 'ok' : 'neutral'}">${p.is_active ? 'Live' : 'Hidden'}</span>
+        </div>
+      </div>
+
+      <label>Name</label><input id="n" value="${esc(p.name)}">
+      <label>Description</label><textarea id="d" style="min-height:70px">${esc(p.description)}</textarea>
+      <label>Price (${esc(me.currency)})</label><input id="pr" inputmode="decimal" value="${p.price}">
+      <div class="row" style="gap:8px">
+        <div style="flex:0 0 90px">
+          <label>Emoji</label>
+          <input id="em" value="${esc(p.emoji || '')}" placeholder="🎬">
+        </div>
+        <div class="grow">
+          <label>Premium icon id</label>
+          <input id="ic" value="${esc(p.icon_emoji_id || '')}" inputmode="numeric"
+                 placeholder="send /ids to the bot to find one">
+        </div>
+        <div style="flex:0 0 110px">
+          <label>Price unit</label>
+          <input id="un" value="${esc(p.unit || '')}" placeholder="code">
+        </div>
+      </div>
+      <button id="save" style="margin-top:12px">Save changes</button>
+      <button class="ghost" id="vis" style="margin-top:8px">
+        ${p.is_active ? 'Hide from shop' : 'Show in shop'}</button>
+
+      <h2>Stock</h2>
+      ${p.infinite ? `
+        <label>Everyone receives this</label>
+        <textarea id="static">${esc(p.static_payload)}</textarea>
+        <button id="saveStatic" style="margin-top:8px">Save content</button>
+        <button class="ghost" id="unlimited" style="margin-top:8px">Switch to per-unit stock</button>
+      ` : `
+        <label>Add items — one per line, each goes to one buyer</label>
+        <textarea id="lines" placeholder="KEY-AAAA-1111&#10;KEY-BBBB-2222"></textarea>
+        <button id="addStock" style="margin-top:8px">Add to stock</button>
+        <div class="row" style="margin-top:8px;gap:8px">
+          <button class="ghost mini" id="export">Export unsold</button>
+          <button class="ghost mini" id="purge">Clear sold rows</button>
+          <button class="ghost mini" id="unlimited">Unlimited mode</button>
+        </div>`}
+
+      <button class="danger" id="del" style="margin-top:22px">Delete product</button>`);
+
+    on('#save', 'click', async () => {
+      await api(`/admin/product/${pid}`, { method: 'PATCH', body: {
+        name: view.querySelector('#n').value.trim(),
+        description: view.querySelector('#d').value.trim(),
+        price: view.querySelector('#pr').value,
+        emoji: view.querySelector('#em').value.trim(),
+        icon_emoji_id: view.querySelector('#ic').value.trim(),
+        unit: view.querySelector('#un').value.trim() } });
+      toast('Changes saved'); refresh();
+    });
+    on('#vis', 'click', async () => {
+      await api(`/admin/product/${pid}`, { method: 'PATCH', body: { is_active: !p.is_active } });
+      toast(p.is_active ? 'Hidden from shop' : 'Live in shop'); refresh();
+    });
+    on('#addStock', 'click', async (e) => {
+      const lines = view.querySelector('#lines').value;
+      if (!lines.trim()) return toast('Paste at least one line', 'err');
+      e.target.disabled = true;
+      const r = await api(`/admin/product/${pid}/stock`, { method: 'POST', body: { lines } });
+      toast(`${r.added} item${r.added === 1 ? '' : 's'} added`); refresh();
+    });
+    on('#export', 'click', async () => {
+      const r = await api(`/admin/product/${pid}/stock`);
+      r.items.length ? copy(r.items.join('\n'), `${r.items.length} lines copied`)
+                     : toast('Nothing unsold', 'err');
+    });
+    on('#purge', 'click', async () => {
+      const r = await api(`/admin/product/${pid}/stock`, { method: 'POST', body: { purge: 1 } });
+      toast(`${r.removed} sold rows cleared`);
+    });
+    on('#unlimited', 'click', async () => {
+      await api(`/admin/product/${pid}`, { method: 'PATCH', body: { infinite: !p.infinite } });
+      toast(p.infinite ? 'Now per-unit stock' : 'Unlimited mode on'); refresh();
+    });
+    on('#saveStatic', 'click', async () => {
+      await api(`/admin/product/${pid}`, { method: 'PATCH', body: {
+        static_payload: view.querySelector('#static').value } });
+      toast('Content saved');
+    });
+    on('#del', 'click', () => confirmDelete('Delete this product?',
+      'Its stock is removed with it. Past orders keep their delivered items.',
+      async () => { await api(`/admin/product/${pid}`, { method: 'DELETE' });
+                    toast('Product deleted'); catalogView(); }));
+  });
+}
+
+function confirmDelete(title, detail, run) {
+  if (tg?.showConfirm) {
+    return tg.showConfirm(`${title}\n\n${detail}`, (ok) => ok && run());
+  }
+  if (confirm(`${title}\n\n${detail}`)) run();
+}
+
+/* ----------------------------------------------------------------- orders */
+function ordersView(filter = 'open') {
+  replaceScreen(async () => {
+    loading();
+    const list = await api(`/admin/orders?status=${filter}`);
+    const tabs = ['open', 'delivered', 'all'];
+    html(`
+      <h1>Orders</h1>
+      <div class="row" style="gap:8px;margin-bottom:12px">
+        ${tabs.map((t) => `<button class="mini ${t === filter ? '' : 'ghost'}" data-f="${t}">
+          ${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}
+      </div>
+      ${list.length ? list.map(orderCard).join('')
+        : `<div class="empty"><b>Nothing here</b>Orders appear the moment a buyer starts
+           checkout.</div>`}`);
+
+    view.querySelectorAll('[data-f]').forEach((b) => b.onclick = () => ordersView(b.dataset.f));
+    view.querySelectorAll('[data-act]').forEach((b) => b.onclick = async () => {
+      b.disabled = true;
+      try {
+        const r = await api(`/admin/order/${b.dataset.oid}/${b.dataset.act}`, { method: 'POST' });
+        toast(r.status === 'delivered' ? 'Delivered'
+              : r.status === 'rejected' ? 'Rejected'
+              : r.status === 'cancelled' ? 'Cancelled' : `Now ${r.status}`);
+        ordersView(filter);
+      } catch (e) { toast(e.message, 'err'); b.disabled = false; }
+    });
+  });
+}
+
+const orderCard = (o) => `
+  <div class="card">
+    <div class="between">
+      <div class="grow trunc"><b>${esc(o.product_name)}</b>
+        <span class="muted small num"> ×${o.qty}</span></div>
+      <span class="num">${money(o.amount)}</span>
+    </div>
+    <div class="between" style="margin-top:8px">
+      ${statusPill(o.status)}
+      <span class="tiny muted num">#${o.id} · ${esc(o.provider)} · ${esc(o.user_id)}</span>
+    </div>
+    ${o.external_ref ? `<div class="small muted num trunc" style="margin-top:6px">
+      ref ${esc(o.external_ref)}</div>` : ''}
+    ${['awaiting_review', 'pending'].includes(o.status) ? `
+      <div class="row" style="gap:8px;margin-top:10px">
+        <button class="mini" data-act="approve" data-oid="${o.id}">
+          ${o.status === 'pending' ? 'Mark paid & deliver' : 'Approve'}</button>
+        <button class="ghost mini" data-act="${o.status === 'pending' ? 'cancel' : 'reject'}"
+          data-oid="${o.id}">${o.status === 'pending' ? 'Cancel' : 'Reject'}</button>
+      </div>
+      ${o.status === 'pending' ? `<div class="tiny muted" style="margin-top:6px">
+        Waiting on the buyer to send payment and submit a reference.</div>` : ''}` : ''}
+  </div>`;
+
+/* ------------------------------------------------------------------ users */
+function usersView(q = '') {
+  replaceScreen(async () => {
+    loading();
+    const list = await api(`/admin/users?q=${encodeURIComponent(q)}`);
+    html(`
+      <h1>Users</h1>
+      <input id="q" placeholder="Search by name, @username or id" value="${esc(q)}">
+      <div style="height:12px"></div>
+      ${list.length ? list.map((u) => `
+        <div class="card" data-u="${u.tg_id}" role="button" tabindex="0">
+          <div class="between">
+            <div class="grow trunc"><b>${esc(u.first_name || 'Unnamed')}</b>
+              <span class="muted small">${u.username ? '@' + esc(u.username) : ''}</span></div>
+            <span class="num">${money(u.balance)}</span>
+          </div>
+          <div class="between small muted" style="margin-top:6px">
+            <span class="num">${u.tg_id}</span>
+            <span>${u.orders} orders · ${money(u.spent)}
+              ${u.is_banned ? '<span class="pill bad">Banned</span>' : ''}</span>
+          </div>
+        </div>`).join('')
+        : `<div class="empty"><b>No match</b>Try a different name or id.</div>`}`);
+
+    let t;
+    on('#q', 'input', (e) => { clearTimeout(t);
+      t = setTimeout(() => usersView(e.target.value), 350); });
+    view.querySelectorAll('[data-u]').forEach((el) =>
+      el.onclick = () => userView(Number(el.dataset.u)));
+  });
+}
+
+function userView(uid) {
+  pushScreen(async () => {
+    loading();
+    const [u] = await api(`/admin/users?q=${uid}`);
+    html(`
+      <h1>${esc(u.first_name || 'Unnamed')}</h1>
+      <p class="sub num">${u.tg_id}${u.username ? ' · @' + esc(u.username) : ''}</p>
+      <div class="card">
+        <div class="between"><span class="muted small">Balance</span>
+          <b class="num">${money(u.balance)}</b></div>
+        <div class="between" style="margin-top:10px"><span class="muted small">Lifetime</span>
+          <span class="num">${u.orders} orders · ${money(u.spent)}</span></div>
+        <div class="between" style="margin-top:10px"><span class="muted small">Access</span>
+          ${u.is_banned ? '<span class="pill bad">Banned</span>'
+                        : '<span class="pill ok">Active</span>'}</div>
+      </div>
+      <label>Adjust balance (negative to deduct)</label>
+      <div class="row"><input id="delta" inputmode="decimal" placeholder="e.g. 500 or -200">
+        <button class="mini" id="apply">Apply</button></div>
+      <button class="ghost" id="ban" style="margin-top:14px">
+        ${u.is_banned ? 'Restore access' : 'Ban from shop'}</button>`);
+
+    on('#apply', 'click', async () => {
+      const delta = Number(view.querySelector('#delta').value);
+      if (!delta) return toast('Enter an amount', 'err');
+      await api(`/admin/user/${uid}`, { method: 'POST', body: { delta } });
+      toast(delta > 0 ? 'Balance credited' : 'Balance debited'); refresh();
+    });
+    on('#ban', 'click', async () => {
+      await api(`/admin/user/${uid}`, { method: 'POST', body: { banned: !u.is_banned } });
+      toast(u.is_banned ? 'Access restored' : 'User banned'); refresh();
+    });
+  });
+}
+
+/* ------------------------------------------------------------------- more */
+function moreView() {
+  replaceScreen(async () => {
+    const [s, f, msgs] = await Promise.all(
+      [api('/admin/settings'), api('/admin/flair'), api('/admin/texts')]);
+    html(`
+      <h1>More</h1>
+      <h2>Broadcast</h2>
+      <p class="sub">Sent to every user who hasn't been banned. HTML formatting works.</p>
+      <textarea id="bc" placeholder="Fresh stock just landed — 20% off today."></textarea>
+      <button id="send" style="margin-top:8px">Send broadcast</button>
+
+      <h2>Sales feed</h2>
+      <p class="sub">Posts every sale to a group. The buyer's name, username and id never
+        leave the bot — only a hashed tag, so repeat buyers look consistent without being
+        identifiable.</p>
+      <label>Group or channel id</label>
+      <input id="feed" placeholder="-1001234567890" value="${esc(f.sales_chat)}">
+      <label>Message template</label>
+      <textarea id="tpl" style="min-height:60px">${esc(f.sale_template)}</textarea>
+      <p class="sub" style="margin-top:6px">Placeholders: <code>{qty}</code>
+        <code>{product}</code> <code>{name}</code> <code>{amount}</code>
+        <code>{provider}</code> <code>{buyer}</code>. The buyer tag is hashed —
+        it never reveals an account.</p>
+      <div class="between card">
+        <span class="small">Add a "Open shop" button to each post</span>
+        <button class="mini ${f.sale_button === '1' ? '' : 'ghost'}" id="saleBtn">
+          ${f.sale_button === '1' ? 'On' : 'Off'}</button>
+      </div>
+      <div class="between card" style="margin-top:10px">
+        <span class="small">Hide the amount in the feed</span>
+        <button class="mini ${f.hide_amount === '1' ? '' : 'ghost'}" id="hideAmt">
+          ${f.hide_amount === '1' ? 'Hidden' : 'Shown'}</button>
+      </div>
+      <div class="row" style="gap:8px;margin-top:8px">
+        <button class="mini" id="saveFeed">Save feed</button>
+        <button class="ghost mini" id="testFeed">Send test post</button>
+      </div>
+
+      <h2>Stickers &amp; premium emoji</h2>
+      <p class="sub">Send the bot <b>/ids</b>, then a sticker or a premium emoji, to get the
+        values below. Custom emoji need the bot owner to have Telegram Premium, or the bot to
+        own a Fragment username — if Telegram refuses them, the plain emoji is used instead
+        and nothing breaks.
+        <b>Button labels can't show custom emoji at all</b>; Telegram allows plain text only
+        there, so the flair lands in the message above the buttons.</p>
+      ${f.custom_emoji_working ? '' :
+        '<div class="card"><span class="pill wait">Falling back</span> ' +
+        '<span class="small muted">Telegram refused a custom emoji this run — plain emoji ' +
+        'are being used.</span></div>'}
+      ${[...new Set(f.slots.map((s) => s.section))].map((sec) => `
+        <h3 style="margin:18px 0 8px;font-size:14px">${esc(sec)}</h3>
+        ${f.slots.filter((s) => s.section === sec).map((s) => `
+        <div class="card">
+          <div class="between"><b>${s.fallback} ${esc(s.label || s.name)}</b>
+            <span class="tiny muted">${esc(s.name)}</span></div>
+          <label>Custom emoji id</label>
+          <input class="fx" data-k="emoji_${s.name}" value="${esc(s.emoji)}"
+                 inputmode="numeric" placeholder="5368324170671202286">
+          <label>Sticker file id</label>
+          <input class="fx" data-k="sticker_${s.name}" value="${esc(s.sticker)}"
+                 placeholder="CAACAgIAAxkBA…">
+        </div>`).join('')}`).join('')}
+      <button class="ghost" id="saveFlair">Save stickers &amp; emoji</button>
+
+      <h2>Button styles</h2>
+      <p class="sub">Bot API 9.4 gives buttons three colours. They're already mapped by
+        meaning — green commits, red destroys, blue leads in — and work on every account.
+        A custom emoji <b>icon</b> on a button needs Premium on the account that owns the bot.</p>
+      <div class="card">
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          <span class="pill ok">success · buy, approve, add stock</span>
+          <span class="pill bad">danger · delete, reject, cancel</span>
+          <span class="pill neutral" style="color:var(--accent)">primary · shop, top up</span>
+        </div>
+      </div>
+      <button class="ghost" id="testBtns">Send me a style test</button>
+
+      <h2>Storefront hero</h2>
+      <p class="sub">The headline buyers see when they open the shop.</p>
+      <label>Badge</label>
+      <input id="h_badge" value="${esc(s.hero_badge || '')}"
+             placeholder="Trusted digital marketplace">
+      <label>Headline</label>
+      <input id="h_title" value="${esc(s.hero_title || '')}"
+             placeholder="Premium digital products,">
+      <label>Highlighted second line</label>
+      <input id="h_accent" value="${esc(s.hero_accent || '')}"
+             placeholder="delivered instantly.">
+      <label>Supporting text</label>
+      <textarea id="h_sub" style="min-height:70px">${esc(s.hero_sub || '')}</textarea>
+      <button class="ghost" id="saveHero" style="margin-top:10px">Save hero</button>
+
+      <h2>Bot messages</h2>
+      <p class="sub">Every message the bot sends. Leave a box empty to keep the
+        default.</p>
+      ${[...new Set(msgs.messages.map((m) => m.section))].map((sec) => `
+        <h3 style="margin:18px 0 8px;font-size:14px">${esc(sec)}</h3>
+        ${msgs.messages.filter((m) => m.section === sec).map((m) => `
+          <div class="card">
+            <div class="between">
+              <b>${esc(m.label)}</b>
+              ${m.edited ? '<span class="pill ok">Edited</span>' : ''}
+            </div>
+            ${m.fields.length ? `<div class="tiny muted" style="margin-top:4px">
+              ${m.fields.map((f) => '{' + esc(f) + '}').join(' ')}</div>` : ''}
+            <textarea class="msg" data-k="${esc(m.key)}" data-default="${esc(m.default)}"
+              style="min-height:64px">${esc(m.value)}</textarea>
+            ${m.edited ? `<button class="ghost mini reset" data-k="${esc(m.key)}"
+              style="margin-top:6px">↩ Restore default</button>` : ''}
+          </div>`).join('')}`).join('')}
+      <button class="ghost" id="saveMsgs">Save messages</button>`);
+
+    on('#send', 'click', (e) => {
+      const text = view.querySelector('#bc').value.trim();
+      if (!text) return toast('Write the message first', 'err');
+      confirmDelete('Send to everyone?', 'This goes out immediately and cannot be recalled.',
+        async () => {
+          e.target.disabled = true;
+          e.target.textContent = 'Sending…';
+          const r = await api('/admin/broadcast', { method: 'POST', body: { text } });
+          toast(`Delivered to ${r.sent} of ${r.total}`);
+          e.target.disabled = false;
+          e.target.textContent = 'Send broadcast';
+        });
+    });
+    const flairBody = () => {
+      const out = { sales_chat: view.querySelector('#feed').value.trim(),
+                    sale_template: view.querySelector('#tpl').value.trim() };
+      view.querySelectorAll('.fx').forEach((i) => { out[i.dataset.k] = i.value.trim(); });
+      return out;
+    };
+    on('#saveFeed', 'click', async () => {
+      await api('/admin/flair', { method: 'POST', body: flairBody() });
+      toast('Sales feed saved');
+    });
+    on('#saveFlair', 'click', async () => {
+      await api('/admin/flair', { method: 'POST', body: flairBody() });
+      toast('Stickers and emoji saved');
+    });
+    on('#saleBtn', 'click', async () => {
+      await api('/admin/flair', { method: 'POST',
+        body: { sale_button: f.sale_button === '1' ? '0' : '1' } });
+      toast('Feed updated'); moreView();
+    });
+    on('#hideAmt', 'click', async () => {
+      await api('/admin/flair', { method: 'POST',
+        body: { hide_amount: f.hide_amount === '1' ? '0' : '1' } });
+      toast('Feed updated'); moreView();
+    });
+    on('#testFeed', 'click', async (e) => {
+      e.target.disabled = true;
+      try {
+        await api('/admin/flair', { method: 'POST',
+          body: { test: 1, chat: view.querySelector('#feed').value.trim() } });
+        toast('Test posted to the group');
+      } catch (err) { toast(err.message, 'err'); }
+      e.target.disabled = false;
+    });
+    on('#testBtns', 'click', async (e) => {
+      e.target.disabled = true;
+      try {
+        const r = await api('/admin/flair', { method: 'POST', body: { test_buttons: 1 } });
+        toast(r.note === 'ok' ? 'Sent — check your chat with the bot' : r.note);
+      } catch (err) { toast(err.message, 'err'); }
+      e.target.disabled = false;
+    });
+    on('#saveHero', 'click', async () => {
+      await api('/admin/settings', { method: 'POST', body: {
+        hero_badge: view.querySelector('#h_badge').value,
+        hero_title: view.querySelector('#h_title').value,
+        hero_accent: view.querySelector('#h_accent').value,
+        hero_sub: view.querySelector('#h_sub').value } });
+      toast('Hero saved');
+    });
+    view.querySelectorAll('.reset').forEach((b) => b.onclick = () => {
+      const ta = view.querySelector(`.msg[data-k="${b.dataset.k}"]`);
+      ta.value = ta.dataset.default;
+      toast('Default restored — save to apply');
+    });
+    on('#saveMsgs', 'click', async (e) => {
+      const out = {};
+      view.querySelectorAll('.msg').forEach((t) => { out[t.dataset.k] = t.value; });
+      e.target.disabled = true;
+      await api('/admin/texts', { method: 'POST', body: out });
+      toast('Messages saved');
+      e.target.disabled = false;
+      moreView();
+    });
+  });
+}
+
+init();
+</script>
+</body>
+</html>

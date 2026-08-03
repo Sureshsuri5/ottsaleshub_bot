@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Shop</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+<script>
+/* Classic (non-module) script, loaded first on purpose: a syntax error inside a
+   module aborts before any module code runs, so only a listener registered out
+   here can report it. Without this the page just goes blank. */
+(function () {
+  var shown = false;
+  function fatal(msg, where) {
+    if (shown) return;
+    shown = true;
+    var v = document.getElementById('view');
+    if (!v) return;
+    v.innerHTML =
+      '<div class="empty"><b>This screen failed to load</b>' +
+      '<div style="text-align:left;font-family:ui-monospace,monospace;font-size:12px;' +
+      'margin-top:12px;padding:12px;border-radius:10px;background:rgba(229,72,77,.12);' +
+      'color:#E5484D;word-break:break-word">' + String(msg) +
+      (where ? '<br><br>' + where : '') + '</div>' +
+      '<div style="margin-top:14px;font-size:13px">Send this text to whoever maintains ' +
+      'the bot — it names the exact file and line.</div></div>';
+  }
+  window.addEventListener('error', function (e) {
+    fatal(e.message, (e.filename || '') + (e.lineno ? ':' + e.lineno : ''));
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    fatal((e.reason && e.reason.message) || e.reason, 'unhandled promise');
+  });
+  window.__buildStamp = '20260802-1521';
+})();
+</script>
+
+</head>
+<body class="store">
+<div class="wrap" id="view"></div>
+
+<nav class="tabs">
+  <button data-tab="shop"   class="sel"><span>🛍</span>Shop</button>
+  <button data-tab="orders"><span>🧾</span>Orders</button>
+  <button data-tab="account"><span>👤</span>Account</button>
+</nav>
+
+<script type="module">
+import { tg, boot, api, toast, copy, haptic, esc, money, setSymbol, setCurrency, currency,
+         gauge, inTelegram, statusPill, pushScreen, replaceScreen, refresh,
+         authQuery, session } from '/static/tg.js';
+
+boot();
+const view = document.getElementById('view');
+let me = null, catalog = [], poll = null, query = '', curIndex = 0;
+
+const html = (s) => { view.innerHTML = s; };
+const loading = () => html('<div class="skeleton"></div>'.repeat(4));
+
+function stopPoll() { clearInterval(poll); poll = null; }
+
+const TABS = { shop: () => shopView(), orders: () => ordersView(),
+               account: () => accountView() };
+
+function selectTab(name) {
+  document.querySelectorAll('.tabs button').forEach(
+    (x) => x.classList.toggle('sel', x.dataset.tab === name));
+  stopPoll();
+  window.scrollTo({ top: 0 });
+  TABS[name]();
+}
+
+document.querySelectorAll('.tabs button').forEach((b) => {
+  b.onclick = () => { haptic(); selectTab(b.dataset.tab); };
+});
+
+async function init() {
+  loading();
+  try {
+    me = await api('/me');
+    setCurrency({ symbol: me.symbol, rate: 1, decimals: me.decimals ?? 2 });
+    shopView();
+  } catch (e) {
+    const browser = !inTelegram();
+    html(`<div class="empty">
+      <b>${browser ? 'Open this from Telegram' : "Can't sign in"}</b>
+      ${browser
+        ? `This shop signs you in with your Telegram account, so it needs to be
+           opened from the bot.<br><br>To use it in a browser instead, set
+           <code>ADMIN_PANEL_TOKEN</code> in <code>.env</code> and add
+           <code>?token=YOUR_TOKEN</code> to this URL.`
+        : esc(e.message)}
+    </div>`);
+  }
+}
+
+/* ------------------------------------------------------------ storefront */
+/* The storefront header. Rebuilt on every screen so the balance, currency and
+   sign-in state are never stale. */
+function topbar() {
+  const cs = me.currencies || [];
+  return `
+    <div class="topbar">
+      ${me.logo ? `<img class="brandmark" src="${esc(me.logo)}" alt="">`
+                : `<div class="brandmark">${esc((me.shop || '?')[0])}</div>`}
+      ${cs.length > 1 ? `<div class="switch">${cs.map((c, i) =>
+        `<button class="chip ${i === curIndex ? 'on' : ''}" data-cur="${i}"
+          >${esc(c.symbol)} ${esc(c.code)}</button>`).join('')}</div>` : ''}
+      <div class="grow"></div>
+      ${me.support ? `<button class="chip ico" data-go="support" title="Support"
+        >➤</button>` : ''}
+      <button class="chip ico" data-go="notify" title="Notifications">🔔</button>
+      ${me.signed_in === false
+        ? `<button class="chip solid" data-go="signin">→] Sign in</button>`
+        : `<button class="chip" data-go="account">👛 ${money(me.balance)}</button>`}
+    </div>`;
+}
+
+/* Wire the header once per render — every screen includes it. */
+function bindTopbar() {
+  view.querySelectorAll('[data-cur]').forEach((b) => b.onclick = () => {
+    curIndex = Number(b.dataset.cur);
+    const c = me.currencies[curIndex];
+    setCurrency({ symbol: c.symbol, rate: c.rate });
+    haptic(); refresh();
+  });
+  view.querySelector('[data-go="account"]')?.addEventListener('click',
+    () => selectTab('account'));
+  view.querySelector('[data-go="signin"]')?.addEventListener('click', signInView);
+  view.querySelector('[data-go="notify"]')?.addEventListener('click',
+    () => me.signed_in === false ? signInView() : selectTab('account'));
+  view.querySelector('[data-go="support"]')?.addEventListener('click', () => {
+    if (tg?.openTelegramLink) tg.openTelegramLink(me.support);
+    else window.open(me.support, '_blank');
+  });
+}
+
+async function shopView() {
+  replaceScreen(async () => {
+    loading();
+    catalog = await api('/catalog');
+    const items = catalog.flatMap((c) => c.products);
+    const ready = items.filter((p) => p.infinite || p.stock).length;
+    const h = me.hero || {};
+    const st = me.stats || {};
+    const shown = query
+      ? items.filter((p) => p.name.toLowerCase().includes(query.toLowerCase()))
+      : items;
+
+    html(`
+      ${topbar()}
+
+      <section class="hero">
+        <span class="pill trust">✦ ${esc(h.hero_badge || '')}</span>
+        <h1>${esc(h.hero_title || '')}<br><span class="accent">${
+          esc(h.hero_accent || '')}</span></h1>
+        <p class="sub">${esc(h.hero_sub || '')}</p>
+        <div class="row" style="gap:10px;margin-top:18px">
+          <button id="browse">Browse products →</button>
+          <button class="ghost" id="deposit">${
+            me.signed_in === false ? 'Create account' : 'Add funds'}</button>
+        </div>
+        <div class="row trustrow">
+          <span>🛡 Secure checkout</span><span>⚡ Instant delivery</span>
+          <span>🎧 24/7 support</span>
+        </div>
+      </section>
+
+      <div class="statgrid">
+        <div class="card"><div class="num">${st.products ?? items.length}</div>
+          <div class="tiny muted">Products</div></div>
+        <div class="card"><div class="num">${st.stock ?? 0}</div>
+          <div class="tiny muted">In stock</div></div>
+        <div class="card"><div class="num">${st.delivered ?? 0}</div>
+          <div class="tiny muted">Delivered</div></div>
+        <div class="card"><div class="num">24/7</div>
+          <div class="tiny muted">Support</div></div>
+      </div>
+
+      <div class="sectionhead" id="catalogue">
+        <h2>Products</h2>
+        <span class="tiny muted">${ready} of ${items.length} available</span>
+      </div>
+      ${items.length > 6 ? `<input class="search" id="q" placeholder="Search products"
+        value="${esc(query)}">` : ''}
+      ${shown.length
+        ? `<div class="grid">${shown.map(productCard).join('')}</div>`
+        : `<div class="empty"><b>Nothing found</b>Try a different search.</div>`}
+      <button class="ghost" id="refresh">🔄 Refresh stock</button>`);
+
+    bindTopbar();
+    view.querySelectorAll('[data-p]').forEach((el) => {
+      el.onclick = () => { haptic(); productView(Number(el.dataset.p)); };
+    });
+    view.querySelector('#browse').onclick = () =>
+      view.querySelector('#catalogue').scrollIntoView({ behavior: 'smooth' });
+    view.querySelector('#deposit').onclick = () =>
+      me.signed_in === false ? signInView() : depositView();
+    const q = view.querySelector('#q');
+    if (q) {
+      q.oninput = () => { query = q.value; };
+      q.onchange = () => shopView();
+      q.onkeydown = (e) => { if (e.key === 'Enter') shopView(); };
+    }
+    view.querySelector('#refresh').onclick = async (e) => {
+      e.target.disabled = true;
+      catalog = await api('/catalog');
+      toast('Updated');
+      shopView();
+    };
+  });
+}
+
+const productCard = (p) => {
+  const live = p.infinite || p.stock > 0;
+  return `
+    <div class="card ${live ? 'live' : 'gone'}" data-p="${p.id}" role="button" tabindex="0">
+      <div class="between">
+        <div class="grow">
+          <div class="trunc"><b>${esc(p.emoji || '')} ${esc(p.name)}</b>
+            <span class="num muted small">(${p.infinite ? '∞' : p.stock})</span></div>
+          <div class="small muted trunc">${esc(p.description) || 'Digital delivery'}</div>
+        </div>
+        <div class="num" style="font-weight:700">${money(p.price)}</div>
+      </div>
+      ${gauge(p.stock, p.infinite)}
+      <div class="between small" style="margin-top:6px">
+        <span class="muted">${p.infinite ? 'Always in stock'
+          : p.stock ? `${p.stock} available` : 'Sold out'}</span>
+        <span class="pill ${live ? 'live' : 'bad'}">${live ? 'In stock' : 'Out of stock'}</span>
+      </div>
+    </div>`;
+};
+
+/* Signing in only matters at the point of buying — the shopfront is public, the
+   way it is on the web. Inside Telegram this screen never appears. */
+function signInView() {
+  // Inside Telegram the person is already identified, so this is one tap to
+  // open an account. In a browser it's the Telegram Login widget.
+  if (me.identified) {
+    pushScreen(() => {
+      html(`
+        <h1>Create your account</h1>
+        <p class="sub">One tap. Telegram has already identified you — this just
+          opens your wallet, orders and referral link.</p>
+        <div class="card">
+          <div class="between"><span class="muted small">Signing in as</span>
+            <b>${esc(me.name || 'you')}</b></div>
+        </div>
+        <button id="go">Continue as ${esc(me.name || 'me')}</button>
+        <p class="sub" style="margin-top:14px">By continuing you agree to receive
+          your purchases and order updates from this bot.</p>`);
+      view.querySelector('#go').onclick = async (e) => {
+        e.target.disabled = true;
+        try {
+          await api('/activate', { method: 'POST', body: {} });
+          me = await api('/me');
+          toast(`Welcome, ${me.name || 'there'}`);
+          shopView();
+        } catch (err) { toast(err.message, 'err'); e.target.disabled = false; }
+      };
+    });
+    return;
+  }
+  pushScreen(() => {
+    html(`
+      <h1>Sign in</h1>
+      <p class="sub">Your account, balance and orders live in Telegram. Signing in
+        links this browser to it — no password, nothing to remember.</p>
+      <div class="card" id="widget" style="text-align:center;padding:22px">
+        <div class="muted small">Loading Telegram…</div>
+      </div>
+      <p class="sub" style="margin-top:14px">Prefer the app? Open
+        <b>@${esc(me.bot || 'the bot')}</b> in Telegram and everything is already
+        signed in.</p>`);
+
+    const box = view.querySelector('#widget');
+    window.onTelegramAuth = async (user) => {
+      try {
+        const r = await api('/auth/telegram', { method: 'POST', body: user });
+        session.set(r.session);
+        toast(`Welcome, ${r.name || 'there'}`);
+        me = await api('/me');
+        setCurrency({ symbol: me.symbol, rate: 1, decimals: me.decimals ?? 2 });
+        shopView();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    const sc = document.createElement('script');
+    sc.src = 'https://telegram.org/js/telegram-widget.js?22';
+    sc.async = true;
+    sc.setAttribute('data-telegram-login', me.bot || '');
+    sc.setAttribute('data-size', 'large');
+    sc.setAttribute('data-radius', '10');
+    sc.setAttribute('data-onauth', 'onTelegramAuth(user)');
+    sc.setAttribute('data-request-access', 'write');
+    sc.onerror = () => { box.innerHTML =
+      '<div class="small muted">Telegram login could not load. Open the bot in ' +
+      'Telegram instead.</div>'; };
+    box.innerHTML = '';
+    box.append(sc);
+  });
+}
+
+function requireSignIn() {
+  if (me.signed_in === false) { signInView(); return true; }
+  return false;
+}
+
+function productView(pid) {
+  const p = catalog.flatMap((c) => c.products).find((x) => x.id === pid);
+  let qty = 1;
+  const max = p.infinite ? 99 : p.stock;
+
+  pushScreen(() => {
+    html(`
+      <h1>${esc(p.emoji || '')} ${esc(p.name)}</h1>
+      <p class="sub">Price: <b class="num">${money(p.price)}</b>${
+        p.unit ? ' / ' + esc(p.unit) : ''}</p>
+      ${p.description ? `<div class="card small">${esc(p.description)}</div>` : ''}
+      <div class="card">
+        <div class="between"><span class="muted small">Stock</span>
+          <span class="num">${p.infinite ? '∞' : p.stock}</span></div>
+        ${gauge(p.stock, p.infinite)}
+      </div>
+      <p class="sub"><i>Delivery is automatic after payment confirmation.</i></p>
+      ${max ? `
+      <div class="card">
+        <div class="between">
+          <span class="muted small">Quantity</span>
+          <div class="row">
+            <button class="ghost mini" id="minus" aria-label="Fewer">−</button>
+            <b class="num" id="qty" style="min-width:2ch;text-align:center">1</b>
+            <button class="ghost mini" id="plus" aria-label="More">+</button>
+          </div>
+        </div>
+        <div class="between" style="margin-top:14px">
+          <span class="muted small">Total</span>
+          <span class="num" id="total" style="font-size:19px"><b>${money(p.price)}</b></span>
+        </div>
+      </div>
+      <button id="buy">Choose payment</button>`
+      : `<div class="empty"><b>Sold out</b>Check back shortly — restocks are frequent.</div>`}
+    `);
+    if (!max) return;
+    const sync = () => {
+      view.querySelector('#qty').textContent = qty;
+      view.querySelector('#total').innerHTML = `<b>${money(p.price * qty)}</b>`;
+    };
+    view.querySelector('#minus').onclick = () => { qty = Math.max(1, qty - 1); haptic(); sync(); };
+    view.querySelector('#plus').onclick = () => { qty = Math.min(max, qty + 1); haptic(); sync(); };
+    view.querySelector('#buy').onclick = () => payView({ kind: 'purchase', product_id: p.id, qty,
+                                                          amount: p.price * qty, name: p.name });
+  });
+}
+
+/* -------------------------------------------------------------- checkout */
+function payView(order) {
+  if (requireSignIn()) return;
+  pushScreen(() => {
+    html(`
+      <h1>Payment</h1>
+      <p class="sub">${esc(order.name)} · ${order.qty || 1} × — total
+        <b class="num">${money(order.amount)}</b></p>
+      ${me.providers.map((p) => `
+        <div class="card" data-m="${p.code}" role="button" tabindex="0">
+          <div class="between"><b>${esc(p.title)}</b><span class="muted">›</span></div>
+          ${p.code === 'balance'
+            ? `<div class="small muted" style="margin-top:4px">Balance ${money(me.balance)}</div>`
+            : ''}
+        </div>`).join('')}`);
+    view.querySelectorAll('[data-m]').forEach((el) => {
+      el.onclick = () => startCheckout(order, el.dataset.m);
+    });
+  });
+}
+
+async function startCheckout(order, provider) {
+  haptic();
+  let res;
+  try {
+    res = await api('/checkout', { method: 'POST', body: { ...order, provider } });
+  } catch (e) { return toast(e.message, 'err'); }
+
+  if (res.instant) { toast('Delivered'); me = await api('/me'); return orderView(res.order_id); }
+  if (res.invoice_link) {
+    tg.openInvoice(res.invoice_link, (status) => {
+      if (status === 'paid') { toast('Payment confirmed'); orderView(res.order_id); }
+      else if (status === 'failed') toast('Payment failed', 'err');
+    });
+    return;
+  }
+  invoiceView(res);
+}
+
+/* Signature screen: the promise of this shop is that nobody checks payments by
+   hand, so the wait is shown as an active watch — a live status line that ticks
+   down and flips itself to delivered. */
+function invoiceView(inv) {
+  let left = inv.expires_in;
+  pushScreen(() => {
+    html(`
+      <h1>Send payment</h1>
+      <p class="sub">Order <b class="num">#${inv.order_id}</b></p>
+
+      <div class="card">
+        <div class="between">
+          <span class="row" style="gap:8px"><i class="dot"></i>
+            <span class="tiny muted" id="watch">Watching for your payment</span></span>
+          <span class="num small muted" id="clock"></span>
+        </div>
+      </div>
+
+      ${inv.qr ? `<div class="card" style="text-align:center">
+        <img src="/api/order/${inv.order_id}/qr?${authQuery()}" alt="Payment QR code"
+             style="width:190px;height:190px;border-radius:10px;background:#fff;padding:8px">
+      </div>` : ''}
+
+      <div class="card">
+        <div class="between"><span class="muted small">Amount</span>
+          <button class="ghost mini num" id="cpAmt">${inv.pay_amount} ${esc(inv.pay_unit)} ⧉</button>
+        </div>
+        ${inv.pay_address ? `
+        <label>Send to</label>
+        <div class="keys" id="addr">${esc(inv.pay_address)}</div>
+        <button class="ghost mini" id="cpAddr" style="margin-top:8px">Copy address</button>` : ''}
+      </div>
+
+      <div class="card small muted">${inv.text}</div>
+
+      ${inv.manual_ref ? `
+        <label>Transaction reference (UTR)</label>
+        <input id="ref" inputmode="numeric" placeholder="12-digit reference">
+        <button id="submitRef" style="margin-top:10px">Submit reference</button>
+      ` : `<button id="check">I've sent it — check now</button>`}
+      <button class="ghost" id="cancel" style="margin-top:8px">Cancel order</button>`);
+
+    const clock = view.querySelector('#clock');
+    const tick = () => {
+      left--;
+      const m = String(Math.max(0, Math.floor(left / 60))).padStart(2, '0');
+      const s = String(Math.max(0, left % 60)).padStart(2, '0');
+      clock.textContent = `${m}:${s}`;
+      if (left <= 0) { stopPoll(); view.querySelector('#watch').textContent = 'Order expired'; }
+    };
+    tick();
+
+    view.querySelector('#cpAmt').onclick = () => copy(String(inv.pay_amount), 'Amount copied');
+    view.querySelector('#cpAddr')?.addEventListener('click',
+      () => copy(inv.pay_address, 'Address copied'));
+    view.querySelector('#cancel').onclick = async () => {
+      stopPoll();
+      await api(`/order/${inv.order_id}/cancel`, { method: 'POST' });
+      toast('Order cancelled');
+      shopView();
+    };
+    view.querySelector('#check')?.addEventListener('click', () => check(true));
+    view.querySelector('#submitRef')?.addEventListener('click', async (e) => {
+      const ref = view.querySelector('#ref').value.trim();
+      e.target.disabled = true;
+      try {
+        await api(`/order/${inv.order_id}/ref`, { method: 'POST', body: { ref } });
+        toast('Sent for review');
+        orderView(inv.order_id);
+      } catch (err) { toast(err.message, 'err'); e.target.disabled = false; }
+    });
+
+    async function check(manual) {
+      try {
+        const r = await api(`/order/${inv.order_id}/check`);
+        if (r.status === 'delivered' || r.status === 'paid') {
+          stopPoll(); haptic('ok'); toast('Payment confirmed'); orderView(inv.order_id);
+        } else if (manual) {
+          toast('Not seen yet — still watching');
+        }
+      } catch (_) {}
+    }
+
+    stopPoll();
+    poll = setInterval(() => { tick(); if (left % 5 === 0) check(false); }, 1000);
+  });
+}
+
+/* ----------------------------------------------------------------- orders */
+async function ordersView() {
+  if (requireSignIn()) return;
+  replaceScreen(async () => {
+    loading();
+    const list = await api('/orders');
+    if (!list.length) {
+      return html(`<div class="empty"><b>No orders yet</b>Anything you buy shows up here,
+        ready to re-open any time.</div>`);
+    }
+    html(`<h1>Orders</h1><p class="sub">Tap to re-open a delivery.</p>
+      ${list.map((o) => `
+        <div class="card" data-o="${o.id}" role="button" tabindex="0">
+          <div class="between">
+            <div class="grow trunc"><b>${esc(o.product_name)}</b>
+              <span class="muted small num"> ×${o.qty}</span></div>
+            <span class="num">${money(o.amount)}</span>
+          </div>
+          <div class="between" style="margin-top:8px">
+            ${statusPill(o.status)}
+            <span class="tiny muted num">#${o.id} · ${esc(o.created_at.slice(0, 16))}</span>
+          </div>
+        </div>`).join('')}`);
+    view.querySelectorAll('[data-o]').forEach((el) => {
+      el.onclick = () => orderView(Number(el.dataset.o));
+    });
+  });
+}
+
+async function orderView(oid) {
+  pushScreen(async () => {
+    loading();
+    const o = await api(`/order/${oid}`);
+    html(`
+      <h1>Order <span class="num">#${o.id}</span></h1>
+      <p class="sub">${esc(o.product_name)} · ${o.qty} ×</p>
+      <div class="card">
+        <div class="between"><span class="muted small">Status</span>${statusPill(o.status)}</div>
+        <div class="between" style="margin-top:10px"><span class="muted small">Paid</span>
+          <span class="num">${money(o.amount)} · ${esc(o.provider)}</span></div>
+        <div class="between" style="margin-top:10px"><span class="muted small">Placed</span>
+          <span class="num small">${esc(o.created_at)}</span></div>
+      </div>
+      ${o.delivered_text ? `
+        <h2>Your items</h2>
+        <div class="keys" id="keys">${esc(o.delivered_text)}</div>
+        <button class="ghost" id="cp" style="margin-top:10px">Copy all</button>`
+        : o.status === 'pending'
+          ? `<div class="card small muted">Waiting on payment. Anything received is matched
+             automatically.</div>` : ''}`);
+    view.querySelector('#cp')?.addEventListener('click',
+      () => copy(o.delivered_text, 'Copied to clipboard'));
+  });
+}
+
+/* ----------------------------------------------------------------- wallet */
+function accountView() {
+  if (requireSignIn()) return;
+  replaceScreen(async () => {
+    me = await api('/me');
+    const [prof, ref] = [me, null];
+    html(`
+      ${topbar()}
+      <h1>Account</h1>
+      <div class="card" style="text-align:center;padding:22px">
+        <div class="tiny muted">Balance</div>
+        <div class="num" style="font-size:34px;font-weight:700;letter-spacing:-.02em">
+          ${money(me.balance)}</div>
+        ${me.tier ? `<div class="small muted" style="margin-top:4px">${
+          esc(me.tier)} pricing</div>` : ''}
+      </div>
+      <button id="topup">Add funds</button>
+
+      <h2>Details</h2>
+      <div class="card">
+        <div class="between"><span class="muted small">Name</span>
+          <span>${esc(prof.name || '—')}</span></div>
+        <div class="between" style="margin-top:10px"><span class="muted small">ID</span>
+          <span class="num">${prof.id}</span></div>
+      </div>
+
+      <div class="between card">
+        <span class="small">Order notifications</span>
+        <button class="mini ${me.notify_orders ? '' : 'ghost'}" id="notif">
+          ${me.notify_orders ? 'On' : 'Off'}</button>
+      </div>
+
+      <button class="ghost" id="orders" style="margin-top:10px">🧾 My orders</button>
+      ${me.support ? `<button class="ghost" id="sup" style="margin-top:8px">
+        🆘 Contact support</button>` : ''}
+      ${!inTelegram() ? `<button class="ghost" id="out" style="margin-top:8px">
+        Sign out of this browser</button>` : ''}`);
+
+    view.querySelector('#topup').onclick = () => depositView();
+    view.querySelector('#orders').onclick = () => selectTab('orders');
+    view.querySelector('#notif').onclick = async () => {
+      await api('/notify', { method: 'POST', body: { orders: !me.notify_orders } });
+      toast('Saved'); refresh();
+    };
+    view.querySelector('#sup')?.addEventListener('click', () => {
+      if (tg?.openTelegramLink) tg.openTelegramLink(me.support);
+      else window.open(me.support, '_blank');
+    });
+    view.querySelector('#out')?.addEventListener('click', () => {
+      session.clear();
+      toast('Signed out');
+      location.reload();
+    });
+    view.querySelectorAll('[data-cur]').forEach((b) => b.onclick = () => {
+      curIndex = Number(b.dataset.cur);
+      const c = me.currencies[curIndex];
+      setCurrency({ symbol: c.symbol, rate: c.rate });
+      haptic(); refresh();
+    });
+    view.querySelector('[data-go="signin"]')?.addEventListener('click', signInView);
+  });
+}
+
+function depositView() {
+  pushScreen(async () => {
+    me = await api('/me');
+    const presets = [100, 250, 500, 1000];
+    html(`
+      <h1>Add funds</h1>
+      <p class="sub">Top up once, then buy with a single tap.
+        Balance <b class="num">${money(me.balance)}</b></p>
+      <div class="row" style="flex-wrap:wrap;gap:8px">
+        ${presets.map((a) => `<button class="ghost mini" data-a="${a}">${money(a)}</button>`).join('')}
+      </div>
+      <label>Or another amount</label>
+      <input id="amt" inputmode="decimal" placeholder="e.g. 750">
+      <button id="go" style="margin-top:10px">Continue</button>
+      ${me.support ? `<button class="ghost" id="sup" style="margin-top:8px">Contact support</button>` : ''}`);
+
+    view.querySelectorAll('[data-a]').forEach((b) => {
+      b.onclick = () => payView({ kind: 'topup', amount: Number(b.dataset.a), name: 'Wallet top-up' });
+    });
+    view.querySelector('#go').onclick = () => {
+      const amount = Number(view.querySelector('#amt').value);
+      if (!(amount > 0)) return toast('Enter an amount above zero', 'err');
+      payView({ kind: 'topup', amount, name: 'Wallet top-up' });
+    };
+    view.querySelector('#sup')?.addEventListener('click', () => tg.openTelegramLink(me.support));
+  });
+}
+
+init();
+</script>
+</body>
+</html>
