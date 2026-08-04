@@ -195,8 +195,23 @@ async def init(path: str) -> None:
             raise RuntimeError("DATABASE_URL is Postgres but asyncpg isn't installed")
         _PG = True
         # Supabase and most managed Postgres require TLS
-        _pool = await asyncpg.create_pool(url, min_size=1, max_size=8,
-                                          command_timeout=30)
+        try:
+            _pool = await asyncpg.create_pool(url, min_size=1, max_size=8,
+                                              command_timeout=30)
+        except OSError as e:
+            # Supabase's direct host is IPv6-only and most PaaS egress is IPv4.
+            # Crash rather than fall back to SQLite: a silent fallback would
+            # look like it worked and quietly lose every order.
+            host = url.split("@")[-1].split("/")[0]
+            raise RuntimeError(
+                f"Cannot reach the database at {host} ({e}).\n"
+                "If this is Supabase, the direct connection is IPv6-only and "
+                "most hosts can't route to it. Use the Session pooler string "
+                "instead — Connect -> Session pooler — which looks like\n"
+                "  postgresql://postgres.PROJECTREF:PASSWORD"
+                "@aws-0-REGION.pooler.supabase.com:5432/postgres\n"
+                "Use port 5432 (session mode), not 6543."
+            ) from e
         schema = SCHEMA
         for a, b in _PG_SCHEMA_FIXES:
             schema = schema.replace(a, b)

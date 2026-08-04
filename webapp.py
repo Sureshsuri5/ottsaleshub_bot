@@ -300,7 +300,9 @@ async def api_checkout(request):
     uid = request["uid"]
     code = d.get("provider", "")
     prov = payments.get(code)
-    if not prov or code not in cfg.providers:
+    # ask payments what's live rather than reading the raw setting: wallet
+    # balance is always offered and never appears in ENABLED_PROVIDERS
+    if not prov or code not in {p.code for p in payments.enabled()}:
         return web.json_response({"error": "That payment method is unavailable."}, status=400)
 
     kind = d.get("kind", "purchase")
@@ -332,10 +334,20 @@ async def api_checkout(request):
             amount=amount, provider="balance", pay_amount=amount, pay_unit=cfg.fiat)
         await db.add_balance(uid, -amount)
         await delivery.settle(request.app["bot"], oid)
-        return web.json_response({"order_id": oid, "instant": True})
+        # hand the keys straight back so the app can show them without a second
+        # round trip — a buyer shouldn't have to go looking for what they just paid for
+        done = await db.order(oid)
+        u = await db.get_user(uid)
+        return web.json_response({
+            "order_id": oid, "instant": True,
+            "code": done["code"], "product": done["product_name"], "qty": done["qty"],
+            "charged": amount, "balance": u["balance"],
+            "items": [ln for ln in (done["delivered_text"] or "").split("\n") if ln],
+        })
 
-    if code == "crypto":
-        pay_amount, pay_unit = await payments.REGISTRY["crypto"].unique_amount(amount), "USDT"
+    if hasattr(prov, "unique_amount"):
+        pay_amount = await prov.unique_amount(amount)
+        pay_unit = prov.quote(amount)[1]
     else:
         pay_amount, pay_unit = prov.quote(amount)
 
@@ -778,7 +790,7 @@ def build_app(bot: Bot) -> web.Application:
     r = app.router
 
     r.add_get("/", _page("shop.html"))
-    r.add_get("/admin", _page("admin.html"))
+    r.add_get(cfg.admin_path, _page("admin.html"))
     r.add_get("/health", lambda _: web.Response(text="ok"))
 
     async def _build(_req):

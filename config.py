@@ -103,6 +103,10 @@ class Config:
     # poll, survives sleep/wake). 'auto' picks webhook when a public URL exists.
     bot_mode: str = os.getenv("BOT_MODE", "auto").strip().lower()
     webhook_secret_tg: str = os.getenv("TG_WEBHOOK_SECRET", "") or os.getenv("ADMIN_PANEL_TOKEN", "")
+    # Where the admin panel is served. Anything other than the default keeps it
+    # off the list of paths scanners try — they probe /admin constantly.
+    admin_path: str = "/" + os.getenv("ADMIN_PATH", "admin").strip("/")
+
     panel_token: str = os.getenv("ADMIN_PANEL_TOKEN", "")
 
     webhook_enabled: bool = _bool("WEBHOOK_ENABLED", False)

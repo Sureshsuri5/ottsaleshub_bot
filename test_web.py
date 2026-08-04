@@ -7,6 +7,12 @@ import asyncio, hashlib, hmac, json, os, time, urllib.parse, sys
 os.environ["BOT_TOKEN"]="777:TESTTOKEN"; os.environ["ADMIN_IDS"]="42"
 os.environ["DB_PATH"]="/tmp/w.db"; os.environ["ADMIN_PANEL_TOKEN"]="devtok"
 os.environ["ENABLED_PROVIDERS"]="balance,stars,crypto,upi"
+# rails now have to be *configured* to be usable, not merely listed — give the
+# ones under test somewhere to receive money
+os.environ.setdefault("TRON_ADDRESS", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t")
+os.environ.setdefault("UPI_VPA", "test@upi")
+os.environ.setdefault("UPI_PAYEE_NAME", "Test Payee")
+os.environ.setdefault("INR_RATE", "88")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 for _f in ("/tmp/w.db", "/tmp/w.db-wal", "/tmp/w.db-shm"):
     if os.path.exists(_f): os.remove(_f)

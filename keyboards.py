@@ -76,7 +76,7 @@ def main_menu(is_admin: bool = False) -> InlineKeyboardMarkup:
     rows.append([btn(L("menu_support", "Support"), "menu:support", icon_slot="menu_support")])
     rows.append([btn(L("menu_refer", "Refer & Earn"), "menu:refer", icon_slot="menu_refer")])
     if is_admin:
-        rows.append([app_btn(L("menu_admin", "Admin panel"), "/admin", style="primary",
+        rows.append([app_btn(L("menu_admin", "Admin panel"), cfg.admin_path, style="primary",
                              icon_slot="menu_admin")]
                     if cfg.miniapps_live
                     else [btn(L("menu_admin", "Admin panel"), "a:home", style="primary",

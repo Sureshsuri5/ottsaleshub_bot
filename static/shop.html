@@ -385,7 +385,7 @@ async function startCheckout(order, provider) {
     res = await api('/checkout', { method: 'POST', body: { ...order, provider } });
   } catch (e) { return toast(e.message, 'err'); }
 
-  if (res.instant) { toast('Delivered'); me = await api('/me'); return orderView(res.order_id); }
+  if (res.instant) { haptic(); me = await api('/me'); return deliveredView(res); }
   if (res.invoice_link) {
     tg.openInvoice(res.invoice_link, (status) => {
       if (status === 'paid') { toast('Payment confirmed'); orderView(res.order_id); }
@@ -394,6 +394,55 @@ async function startCheckout(order, provider) {
     return;
   }
   invoiceView(res);
+}
+
+/* What you paid for, immediately, without navigating anywhere. The keys are the
+   thing the buyer came for — everything else on this screen is secondary. */
+function deliveredView(res) {
+  const items = res.items || [];
+  replaceScreen(() => {
+    html(`
+      ${topbar()}
+      <div class="card ok-card">
+        <div class="tick">✅</div>
+        <h1 style="margin:6px 0 2px">Delivered</h1>
+        <p class="sub">${esc(res.product)} ×${res.qty} · ${money(res.charged)}</p>
+      </div>
+
+      <div class="sectionhead">
+        <h2>Your ${items.length > 1 ? 'items' : 'item'}</h2>
+        <span class="tiny muted">Order #${esc(res.code || res.order_id)}</span>
+      </div>
+      ${items.map((it, i) => `
+        <div class="keyrow">
+          <span class="tiny muted">${i + 1}</span>
+          <code>${esc(it)}</code>
+          <button class="mini ghost" data-copy="${esc(it)}">Copy</button>
+        </div>`).join('')}
+
+      ${items.length > 1
+        ? `<button class="ghost" id="copyall">Copy all ${items.length}</button>` : ''}
+      <button class="ghost" id="dl">⬇ Download as .txt</button>
+
+      <p class="sub" style="margin-top:16px">Saved to your orders — you can come back
+        to this any time. Balance ${money(res.balance)}.</p>
+      <button id="more">Buy something else</button>`);
+
+    bindTopbar();
+    view.querySelectorAll('[data-copy]').forEach((b) =>
+      b.onclick = () => copy(b.dataset.copy, 'Copied'));
+    view.querySelector('#copyall')?.addEventListener('click',
+      () => copy(items.join('\n'), `${items.length} copied`));
+    view.querySelector('#dl').onclick = () => {
+      const blob = new Blob([items.join('\n')], { type: 'text/plain' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `order_${res.code || res.order_id}.txt`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    };
+    view.querySelector('#more').onclick = () => selectTab('shop');
+  });
 }
 
 /* Signature screen: the promise of this shop is that nobody checks payments by

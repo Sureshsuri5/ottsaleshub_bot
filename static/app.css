@@ -311,3 +311,17 @@ img.brandmark { object-fit: cover; }
   .hero h1 { font-size: 28px; }
   .statgrid { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* delivered screen */
+.ok-card { text-align: center; padding: 26px 20px 20px; border-color: var(--ok); }
+.ok-card .tick { font-size: 34px; line-height: 1; }
+.keyrow {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 12px; padding: 10px 12px; margin-bottom: 8px;
+}
+.keyrow code {
+  flex: 1; font-size: 13px; word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.keyrow .mini { flex: none; }
