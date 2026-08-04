@@ -211,6 +211,24 @@ async def init(path: str) -> None:
     await _migrate()
 
 
+def backend() -> str:
+    """What we're actually talking to, not what was configured.
+
+    A status line that reports the setting rather than the connection can't
+    tell you whether a migration took effect — which is the only moment you
+    ever look at it.
+    """
+    if _PG and _pool is not None:
+        import os
+        url = os.getenv("DATABASE_URL", "")
+        host = url.split("@")[-1].split("/")[0] if "@" in url else "postgres"
+        return f"PostgreSQL — {host}"
+    if _conn is not None:
+        import os
+        return f"SQLite — {os.getenv('DB_PATH', 'shop.db')} (lost on redeploy)"
+    return "not connected"
+
+
 async def close() -> None:
     """Shut the connection down cleanly on either engine."""
     global _conn, _pool

@@ -367,7 +367,7 @@ async def status_cmd(m: Message, state: FSMContext):
     lines += ["",
               f"🔌 Update mode: <b>{'webhook' if cfg.use_webhook else 'polling'}</b>",
               f"🎨 Premium emoji: {'✅ working' if flair.ICONS_OK else '⚠️ refused'}",
-              f"🗄 Database: <code>{esc(cfg.db_path)}</code>",
+              f"🗄 Database: <b>{esc(db.backend())}</b>",
               f"📦 {s['products']} product(s) · {s['in_stock']} unit(s) in stock",
               f"👥 {s['users']} user(s) · 🕒 {cfg.timezone}"]
 
