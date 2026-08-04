@@ -324,9 +324,23 @@ def deposit_kb() -> InlineKeyboardMarkup:
     return kb(*rows)
 
 
-def deposit_amount_kb(code: str) -> InlineKeyboardMarkup:
-    presets = [btn(cfg.money(a), f"top:{int(a * 100)}:{code}", style="primary",
-                   icon_slot="money") for a in TOPUP_PRESETS]
+def deposit_amount_kb(code: str, unit: str = "", rate: float = 1.0,
+                      symbol: str = "") -> InlineKeyboardMarkup:
+    """Presets in whatever currency this rail actually moves.
+
+    Asking an Indian buyer to pick "$100" when they'll be paying rupees makes
+    them do the conversion in their head — so offer round rupee amounts and
+    convert on the way back.
+    """
+    if unit and unit.upper() != cfg.fiat.upper() and rate > 0:
+        # round figures in the paying currency, not converted odd ones
+        native = [500, 1000, 2000, 5000] if rate > 20 else [10, 25, 50, 100]
+        presets = [btn(f"{symbol or ''}{a:,}".strip(),
+                       f"top:{int(round(a / rate * 100))}:{code}",
+                       style="primary", icon_slot="money") for a in native]
+    else:
+        presets = [btn(cfg.money(a), f"top:{int(a * 100)}:{code}", style="primary",
+                       icon_slot="money") for a in TOPUP_PRESETS]
     return kb(presets[:2], presets[2:],
               [btn(flair.label("qty_custom", "Custom amount"), f"topup:{code}",
                    icon_slot="qty_custom")],

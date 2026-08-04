@@ -730,16 +730,19 @@ async def deposit_amount(c: CallbackQuery, state: FSMContext):
     # Say which currency this rail actually moves. Amounts are chosen in the
     # shop currency, but UPI settles in rupees and the chains in USDT — showing
     # the conversion here stops the invoice being a surprise.
-    note = ""
+    unit, rate, symbol = cfg.fiat, 1.0, cfg.symbol
     if prov:
-        sample, unit = prov.quote(10.0)
-        if unit.upper() != cfg.fiat.upper() and sample:
-            note = (f"\n\n<i>{prov.title} settles in {esc(unit)} — "
-                    f"{cfg.money(10)} is about {sample:g} {esc(unit)}.</i>")
+        sample, unit = prov.quote(1.0)
+        rate = sample or 1.0
+        symbol = "₹" if unit.upper() == "INR" else ""
+
+    foreign = unit.upper() != cfg.fiat.upper() and rate > 0
+    note = (f"\n\n<i>Credited to your wallet in {cfg.fiat} — "
+            f"{symbol}{rate:,.0f} is about {cfg.money(1)}.</i>" if foreign else "")
     await show(c, f"{prov.title if prov else 'Deposit'}\n\n"
                   f"How much would you like to add?\n"
-                  f"Choose or type an amount in <b>{cfg.fiat}</b>.{note}",
-               k.deposit_amount_kb(code))
+                  f"Choose or type an amount in <b>{esc(unit)}</b>.{note}",
+               k.deposit_amount_kb(code, unit, rate, symbol))
     await c.answer()
 
 
@@ -757,11 +760,28 @@ async def topup_preset(c: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("topup"))
 async def topup_custom(c: CallbackQuery, state: FSMContext):
     code = c.data.split(":")[1] if ":" in c.data else ""
+    prov = payments.get(code) if code else None
+    unit = prov.quote(1.0)[1] if prov else cfg.fiat
     await state.set_state(Buy.waiting_topup)
     await state.update_data(topup_code=code)
-    await show(c, f"How much would you like to add?\nSend an amount in {cfg.fiat}.",
-               k.cancel_kb())
+    await show(c, f"How much would you like to add?\n"
+                  f"Send an amount in <b>{esc(unit)}</b>.", k.cancel_kb())
     await c.answer()
+
+
+def _to_shop_currency(amount: float, code: str) -> float:
+    """A figure typed in the rail's currency, expressed in the shop's.
+
+    Kept in one place so the preset buttons and a typed amount can't ever
+    disagree about what a buyer just asked for.
+    """
+    prov = payments.get(code) if code else None
+    if not prov:
+        return amount
+    rate, unit = prov.quote(1.0)
+    if unit.upper() == cfg.fiat.upper() or not rate:
+        return amount
+    return round(amount / rate, 2)
 
 
 @router.message(Buy.waiting_topup)
@@ -774,10 +794,18 @@ async def topup_amount(m: Message, state: FSMContext):
     code = (await state.get_data()).get("topup_code", "")
     await state.clear()
     if code:
-        await m.answer(f"Top up {cfg.money(amount)} via {payments.get(code).title}.")
+        # they typed it in the rail's currency; the wallet is in the shop's
+        shop_amount = _to_shop_currency(amount, code)
+        prov = payments.get(code)
+        unit = prov.quote(1.0)[1]
+        line = (f"Top up {cfg.money(shop_amount)} via {prov.title}."
+                if unit.upper() == cfg.fiat.upper() else
+                f"Paying {amount:,.2f} {esc(unit)} via {prov.title} — "
+                f"<b>{cfg.money(shop_amount)}</b> will be added to your wallet.")
+        await m.answer(line)
         return await m.answer("Opening payment…",
                               reply_markup=k.kb([k.btn("Continue",
-                                  f"pay:topup:{int(amount * 100)}:1:{code}")]))
+                                  f"pay:topup:{int(round(shop_amount * 100))}:1:{code}")]))
     await m.answer(f"Top up {cfg.money(amount)} — choose a method:",
                    reply_markup=k.providers_kb(int(amount * 100), 1, kind="topup"))
 
