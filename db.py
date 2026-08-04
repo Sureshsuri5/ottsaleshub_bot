@@ -6,6 +6,11 @@ from typing import Any, Iterable, Sequence
 
 import aiosqlite
 
+try:                                   # only needed when running on Postgres
+    import asyncpg
+except ImportError:                    # pragma: no cover
+    asyncpg = None
+
 SCHEMA = """
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
@@ -126,12 +131,104 @@ def in_minutes(m: int) -> str:
     return (datetime.now(timezone.utc) + timedelta(minutes=m)).strftime("%Y-%m-%d %H:%M:%S")
 
 
+# ------------------------------------------------------- dialect layer
+# Queries are written once in SQLite's dialect. When DATABASE_URL points at
+# Postgres they're translated on the way out, so there is a single source of
+# truth for every query rather than two that can drift apart.
+_PG = False
+_pool = None
+
+_PG_SCHEMA_FIXES = (
+    ("INTEGER PRIMARY KEY AUTOINCREMENT", "BIGSERIAL PRIMARY KEY"),
+    ("tg_id       INTEGER PRIMARY KEY", "tg_id       BIGINT PRIMARY KEY"),
+    ("REAL", "DOUBLE PRECISION"),
+    ("(datetime('now'))", "(to_char(now() at time zone 'utc',"
+                          " 'YYYY-MM-DD HH24:MI:SS'))"),
+    ("PRAGMA journal_mode = WAL;", ""),
+    ("PRAGMA foreign_keys = ON;", ""),
+)
+
+
+def _pg_sql(sql: str) -> str:
+    """SQLite SQL -> Postgres SQL. Only the differences this schema uses."""
+    import re as _re
+    out = sql
+    # ? placeholders become $1, $2 ...
+    n = 0
+    def sub(_m):
+        nonlocal n
+        n += 1
+        return f"${n}"
+    out = _re.sub(r"\?", sub, out)
+    out = out.replace("INSERT OR IGNORE", "INSERT")
+    # Postgres has no round(double precision, int) — the money columns are
+    # double precision, so every rounding needs an explicit numeric cast
+    out = _re.sub(r"ROUND\(([^,()]+(?:\([^()]*\))?[^,()]*),\s*(\d+)\)",
+                  r"ROUND(CAST(\1 AS numeric), \2)", out, flags=_re.I)
+    # datetime('now', '-7 days') -> now() - interval '7 days'
+    out = _re.sub(r"datetime\('now',\s*'-(\d+) (day|days|minute|minutes)'\)",
+                  lambda m: f"to_char(now() at time zone 'utc' - interval "
+                            f"'{m.group(1)} {m.group(2)}', "
+                            f"'YYYY-MM-DD HH24:MI:SS')", out)
+    # keep the parameter typed as text: asyncpg would otherwise try to encode
+    # a Python str as an interval and fail
+    out = _re.sub(r"datetime\('now',\s*\$(\d+)\)",
+                  lambda m: "to_char(now() at time zone 'utc' + "
+                            f"(${m.group(1)})::text::interval, "
+                            "'YYYY-MM-DD HH24:MI:SS')", out)
+    out = out.replace("datetime('now')",
+                      "to_char(now() at time zone 'utc', 'YYYY-MM-DD HH24:MI:SS')")
+    return out
+
+
 async def init(path: str) -> None:
-    global _conn
+    """SQLite by default; Postgres when DATABASE_URL is set.
+
+    Postgres is what you want anywhere the disk isn't yours — a free PaaS
+    instance wipes SQLite on every restart, taking balances with it.
+    """
+    global _conn, _PG, _pool
+    import os
+    url = os.getenv("DATABASE_URL", "").strip()
+    if url.startswith(("postgres://", "postgresql://")):
+        if asyncpg is None:
+            raise RuntimeError("DATABASE_URL is Postgres but asyncpg isn't installed")
+        _PG = True
+        # Supabase and most managed Postgres require TLS
+        _pool = await asyncpg.create_pool(url, min_size=1, max_size=8,
+                                          command_timeout=30)
+        schema = SCHEMA
+        for a, b in _PG_SCHEMA_FIXES:
+            schema = schema.replace(a, b)
+        async with _pool.acquire() as con:
+            await con.execute(schema)
+        await _migrate()
+        return
+
     _conn = await aiosqlite.connect(path)
     _conn.row_factory = aiosqlite.Row
     await _conn.executescript(SCHEMA)
-    # additive migrations — safe to run against a database made by an older build
+    await _migrate()
+
+
+async def close() -> None:
+    """Shut the connection down cleanly on either engine."""
+    global _conn, _pool
+    if _PG and _pool is not None:
+        await _pool.close()
+        _pool = None
+        return
+    if _conn is not None:
+        await _conn.close()
+        _conn = None
+
+
+async def _migrate() -> None:
+    """Additive migrations, safe to re-run and safe on both engines.
+
+    Each statement is tried independently: a column that already exists raises,
+    and that's the expected outcome on every start after the first.
+    """
     for stmt in (
         "ALTER TABLE users ADD COLUMN referred_by INTEGER",
         "ALTER TABLE users ADD COLUMN ref_earned REAL NOT NULL DEFAULT 0",
@@ -145,41 +242,85 @@ async def init(path: str) -> None:
         "ALTER TABLE users ADD COLUMN ref_transferred REAL NOT NULL DEFAULT 0",
         "ALTER TABLE orders ADD COLUMN code TEXT",
         "ALTER TABLE users ADD COLUMN tier_id INTEGER REFERENCES tiers(id)",
-        # 1 once the buyer has explicitly opened an account; existing users are
-        # backfilled below so nobody is asked to sign in twice
         "ALTER TABLE users ADD COLUMN activated INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE products ADD COLUMN keywords TEXT NOT NULL DEFAULT ''",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_code ON orders(code)",
     ):
         try:
-            await _conn.execute(stmt)
+            await ex(stmt)
         except Exception:
-            pass
+            pass                       # already applied
+
     # anyone who already transacted counts as activated
-    await _conn.execute(
-        "UPDATE users SET activated = 1 WHERE activated = 0 AND ("
-        "  balance > 0 OR tg_id IN (SELECT DISTINCT user_id FROM orders))")
-    await _conn.commit()
+    try:
+        await ex("UPDATE users SET activated = 1 WHERE activated = 0 AND ("
+                 "  balance > 0 OR tg_id IN (SELECT DISTINCT user_id FROM orders))")
+    except Exception:
+        pass
 
 
-async def close() -> None:
-    if _conn:
-        await _conn.close()
-
-
-async def q(sql: str, args: Sequence[Any] = ()) -> list[aiosqlite.Row]:
+async def q(sql: str, args: Sequence[Any] = ()) -> list:
+    if _PG:
+        async with _pool.acquire() as con:
+            return await con.fetch(_pg_sql(sql), *args)
     cur = await _conn.execute(sql, args)
     rows = await cur.fetchall()
     await cur.close()
     return rows
 
 
-async def q1(sql: str, args: Sequence[Any] = ()) -> aiosqlite.Row | None:
+async def q1(sql: str, args: Sequence[Any] = ()):
     rows = await q(sql, args)
     return rows[0] if rows else None
 
 
+async def ex_many(sql: str, rows: Sequence[Sequence[Any]]) -> int:
+    """Batch insert. One round trip on either engine."""
+    if not rows:
+        return 0
+    if _PG:
+        async with _pool.acquire() as con:
+            await con.executemany(_pg_sql(sql), rows)
+        return len(rows)
+    await _conn.executemany(sql, rows)
+    await _conn.commit()
+    return len(rows)
+
+
+async def ex_count(sql: str, args: Sequence[Any] = ()) -> int:
+    """Run a DELETE/UPDATE and report how many rows it touched."""
+    if _PG:
+        async with _pool.acquire() as con:
+            tag = await con.execute(_pg_sql(sql), *args)
+            # asyncpg returns a status like "DELETE 3"
+            try:
+                return int(str(tag).rsplit(" ", 1)[-1])
+            except ValueError:
+                return 0
+    cur = await _conn.execute(sql, args)
+    await _conn.commit()
+    n = cur.rowcount
+    await cur.close()
+    return n
+
+
+# Tables whose INSERTs return a generated id the caller needs back.
+_ID_TABLES = {"categories", "products", "stock", "orders", "withdrawals", "tiers"}
+
+
 async def ex(sql: str, args: Sequence[Any] = ()) -> int:
+    """Run a statement. Returns the new row id for INSERTs that generate one."""
+    if _PG:
+        import re as _re
+        sql_pg = _pg_sql(sql)
+        m = _re.match(r"\s*INSERT\s+INTO\s+(\w+)", sql_pg, _re.I)
+        async with _pool.acquire() as con:
+            if m and m.group(1).lower() in _ID_TABLES \
+                    and "RETURNING" not in sql_pg.upper():
+                row = await con.fetchrow(sql_pg + " RETURNING id", *args)
+                return row["id"] if row else 0
+            await con.execute(sql_pg, *args)
+            return 0
     cur = await _conn.execute(sql, args)
     await _conn.commit()
     lastrow = cur.lastrowid
@@ -495,15 +636,11 @@ async def add_stock(pid: int, lines: Iterable[str]) -> int:
     rows = [(pid, ln.strip()) for ln in lines if ln.strip()]
     if not rows:
         return 0
-    await _conn.executemany("INSERT INTO stock (product_id, payload) VALUES (?, ?)", rows)
-    await _conn.commit()
-    return len(rows)
+    return await ex_many("INSERT INTO stock (product_id, payload) VALUES (?, ?)", rows)
 
 
 async def purge_sold(pid: int) -> int:
-    cur = await _conn.execute("DELETE FROM stock WHERE product_id = ? AND is_sold = 1", (pid,))
-    await _conn.commit()
-    return cur.rowcount
+    return await ex_count("DELETE FROM stock WHERE product_id = ? AND is_sold = 1", (pid,))
 
 
 async def allocate_stock(pid: int, qty: int, order_id: int) -> list[str] | None:
@@ -616,11 +753,9 @@ async def prune_dead_orders(days: int) -> int:
     """
     if days <= 0:
         return 0
-    cur = await _conn.execute(
+    return await ex_count(
         "DELETE FROM orders WHERE status IN ('cancelled','expired','rejected') "
         "AND created_at < datetime('now', ?)", (f"-{days} days",))
-    await _conn.commit()
-    return cur.rowcount
 
 
 async def open_orders(provider: str | None = None):
@@ -666,8 +801,13 @@ async def mark_seen(ref: str, order_id: int | None = None) -> bool:
     try:
         await ex("INSERT INTO seen_tx (ref, order_id) VALUES (?, ?)", (ref, order_id))
         return True
-    except aiosqlite.IntegrityError:
-        return False
+    except Exception as e:
+        # SQLite raises IntegrityError, asyncpg UniqueViolationError — either
+        # way a duplicate ref means this payment was already counted
+        if "unique" in type(e).__name__.lower() or "unique" in str(e).lower() \
+                or "duplicate" in str(e).lower() or "integrity" in type(e).__name__.lower():
+            return False
+        raise
 
 
 # -------------------------------------------------------------- settings
@@ -705,7 +845,8 @@ async def stats() -> dict:
         "WHERE status = 'delivered' AND kind = 'purchase'"))["s"]
     rev_today = (await one(
         "SELECT COALESCE(SUM(amount), 0) s FROM orders WHERE status = 'delivered' "
-        "AND kind = 'purchase' AND date(paid_at) = date('now')"))["s"]
+        "AND kind = 'purchase' "
+        "AND substr(paid_at, 1, 10) = substr(datetime('now'), 1, 10)"))["s"]
     pending = (await one("SELECT COUNT(*) c FROM orders WHERE status IN ('pending','awaiting_review')"))["c"]
     prods = (await one("SELECT COUNT(*) c FROM products WHERE is_active = 1"))["c"]
     in_stock = (await one("SELECT COUNT(*) c FROM stock WHERE is_sold = 0"))["c"]
@@ -718,7 +859,9 @@ async def low_stock(threshold: int):
         "SELECT p.id, p.name, COUNT(s.id) c FROM products p "
         "LEFT JOIN stock s ON s.product_id = p.id AND s.is_sold = 0 "
         "WHERE p.is_active = 1 AND p.infinite = 0 "
-        "GROUP BY p.id HAVING c <= ? ORDER BY c",
+        # repeat the aggregate rather than referencing the alias: SQLite
+        # allows an alias in HAVING, Postgres doesn't
+        "GROUP BY p.id, p.name HAVING COUNT(s.id) <= ? ORDER BY COUNT(s.id)",
         (threshold,),
     )
 
@@ -767,9 +910,11 @@ async def catalog() -> list[dict]:
 
 async def revenue_series(days: int = 14) -> list[dict]:
     rows = await q(
-        "SELECT date(paid_at) d, COALESCE(SUM(amount),0) s, COUNT(*) n FROM orders "
-        "WHERE status = 'delivered' AND kind = 'purchase' AND paid_at IS NOT NULL "
-        "AND date(paid_at) >= date('now', ?) GROUP BY d ORDER BY d",
+        "SELECT substr(paid_at, 1, 10) d, COALESCE(SUM(amount),0) s, COUNT(*) n "
+        "FROM orders WHERE status = 'delivered' AND kind = 'purchase' "
+        "AND paid_at IS NOT NULL "
+        "AND substr(paid_at, 1, 10) >= substr(datetime('now', ?), 1, 10) "
+        "GROUP BY substr(paid_at, 1, 10) ORDER BY 1",
         (f"-{days} days",))
     return [dict(r) for r in rows]
 

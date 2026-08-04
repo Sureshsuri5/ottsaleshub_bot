@@ -4,3 +4,4 @@ aiohttp>=3.9
 python-dotenv>=1.0
 qrcode[pil]>=7.4
 tzdata>=2024.1   # zoneinfo needs this on Windows
+asyncpg>=0.29

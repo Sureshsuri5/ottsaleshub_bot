@@ -664,13 +664,44 @@ async def api_auth(request: web.Request):
     a leaked key can only spend that one user's balance."""
     if not cfg.api_enabled:
         return None, web.json_response({"error": "api disabled"}, status=503)
-    key = request.headers.get("X-API-Key", "")
+    # accept both conventions — every client library reaches for one or other
+    key = (request.headers.get("X-API-Key", "")
+           or request.headers.get("Authorization", "").removeprefix("Bearer ").strip())
     u = await db.user_by_api_key(key)
     if not u:
         return None, web.json_response({"error": "invalid api key"}, status=401)
     if u["is_banned"]:
         return None, web.json_response({"error": "account suspended"}, status=403)
     return u, None
+
+
+# A reseller polling in a loop shouldn't be able to exhaust the shop for
+# everyone else. Generous enough that no honest integration notices.
+API_LIMIT = 120          # requests per key
+API_WINDOW = 60          # seconds
+_api_hits: dict[str, list[float]] = {}
+
+
+def _rate_ok(key: str) -> bool:
+    now = time.time()
+    hits = [t for t in _api_hits.get(key, []) if now - t < API_WINDOW]
+    hits.append(now)
+    _api_hits[key] = hits
+    return len(hits) <= API_LIMIT
+
+
+@web.middleware
+async def api_rate_limit(request: web.Request, handler):
+    if not request.path.startswith("/api/v1/"):
+        return await handler(request)
+    key = (request.headers.get("X-API-Key")
+           or request.headers.get("Authorization", "")
+           or request.remote or "?")[:80]
+    if not _rate_ok(key):
+        return web.json_response(
+            {"error": f"rate limit: {API_LIMIT} requests per {API_WINDOW}s"},
+            status=429, headers={"Retry-After": str(API_WINDOW)})
+    return await handler(request)
 
 
 async def v1_products(request):
@@ -742,7 +773,7 @@ def _page(name: str):
 
 
 def build_app(bot: Bot) -> web.Application:
-    app = web.Application(middlewares=[auth_middleware])
+    app = web.Application(middlewares=[api_rate_limit, auth_middleware])
     app["bot"] = bot
     r = app.router
 
