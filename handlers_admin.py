@@ -150,7 +150,7 @@ async def _flair_home():
         done = sum(1 for s in slots if flair.ICONS.get(s))
         rows.append([k.btn(f"{section} — {done}/{len(slots)} set", f"a:fsec:{section}")])
     emoji = await db.setting("flair:welcome_emoji", flair.SLOTS["welcome"])
-    delay = await db.setting("flair:welcome_delay", "1.2")
+    delay = await db.setting("flair:welcome_delay", "0")
     rows.append([k.btn(f"⏳ Intro: {emoji or 'off'} · {delay}s", "a:intro")])
     rows.append([k.btn("🧪 Test buttons", "a:btntest")])
     rows.append([k.btn("« Panel", "a:home")])
@@ -220,8 +220,9 @@ async def intro_edit(c: CallbackQuery, state: FSMContext):
     await _show(c,
         "⏳ <b>Intro beat</b>\n\n"
         "Sent right after /start, just before the welcome message.\n\n"
-        "Send an emoji (it renders large on its own), optionally followed by a "
-        "delay in seconds — e.g. <code>⏳ 1.5</code>\n"
+        "Send an emoji (it renders large on its own), optionally followed by "
+        "how long it should stay on screen — e.g. <code>⏳ 1.5</code>\n"
+        "It is cleared in the background, so it never delays the welcome.\n"
         "Send <code>-</code> to turn it off.\n\n"
         "<i>For a premium emoji, set the <b>Intro beat</b> slot under "
         "Other — it's used here automatically. A sticker on that slot wins "
@@ -235,7 +236,7 @@ async def intro_save(m: Message, state: FSMContext):
     await state.clear()
     parts = (m.text or "").strip().split()
     emoji = parts[0] if parts else "-"
-    delay = "1.2"
+    delay = "0"
     if len(parts) > 1:
         try:
             delay = str(max(0.0, min(5.0, float(parts[1]))))
@@ -317,6 +318,54 @@ async def check_ref(m: Message, state: FSMContext):
         out.append("\n<i>No rail could confirm this. If you did send it, check the "
                    "receiving address and network match the rail you're testing.</i>")
     await m.answer("\n".join(out), reply_markup=k.back())
+
+
+BACKUP_TABLES = ("users", "categories", "products", "stock", "orders",
+                 "tiers", "tier_prices", "withdrawals", "settings", "seen_tx")
+
+
+@router.message(Command("backup"))
+async def backup_cmd(m: Message, state: FSMContext):
+    """Dump every table to a gzipped JSON file and send it here.
+
+    Supabase's free plan keeps no point-in-time history, so the only copy of
+    your balances and undelivered stock is the one you take yourself. JSON
+    rather than SQL so it restores onto either engine.
+    """
+    await state.clear()
+    import gzip
+    import json
+    from datetime import datetime, timezone
+
+    note = await m.answer("📦 Building backup…")
+    data: dict[str, list] = {}
+    counts = []
+    try:
+        for table in BACKUP_TABLES:
+            rows = await db.q(f"SELECT * FROM {table}")
+            data[table] = [dict(r) for r in rows]
+            counts.append(f"{table}: {len(rows):,}")
+    except Exception as e:
+        return await note.edit_text(f"❌ Backup failed: <code>{esc(str(e)[:300])}</code>")
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+    blob = gzip.compress(json.dumps(
+        {"taken_at": db.now(), "backend": db.backend(), "tables": data},
+        default=str).encode())
+
+    # Bots can upload 50 MB. A shop that outgrows that should be dumping from
+    # the database directly rather than through Telegram.
+    if len(blob) > 49 * 1024 * 1024:
+        return await note.edit_text(
+            f"❌ Backup is {len(blob) / 1024 / 1024:.0f} MB — too large to send "
+            "over Telegram. Use <code>pg_dump</code> against your Supabase URL.")
+
+    await note.delete()
+    await m.answer_document(
+        BufferedInputFile(blob, filename=f"shop-backup-{stamp}.json.gz"),
+        caption="🗄 <b>Backup</b>\n" + "\n".join(counts) +
+                f"\n\n<i>{len(blob) / 1024:.0f} KB · {db.backend()}</i>",
+        reply_markup=k.back())
 
 
 @router.message(Command("status"))

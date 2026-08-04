@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 
 from aiogram import F, Router
@@ -178,19 +179,25 @@ async def start(m: Message, state: FSMContext):
                              f"through your link.\nYou earn when they make their first purchase.")
             except Exception:
                 pass
-    # show the placeholder, hold it for the configured beat, clear it, then
-    # send the welcome — so the two are never on screen together
+    # Render the welcome *while* the placeholder is being sent, then let the
+    # placeholder clean itself up in the background. Nothing between /start and
+    # the welcome is serial any more except the two sends themselves.
+    text = asyncio.create_task(menu_text(m.from_user.id))
     intro_id = await flair.intro(m.bot, m.chat.id)
-    await flair.clear_intro(m.bot, m.chat.id, intro_id)
-    await send_menu(m)
+    delay = await flair.intro_delay() if intro_id else 0.0
+    await send_menu(m, await text)
+    if intro_id:
+        asyncio.create_task(flair.clear_intro(m.bot, m.chat.id, intro_id, delay))
 
 
-async def send_menu(m: Message) -> None:
+async def send_menu(m: Message, text: str | None = None) -> None:
     """Send the welcome, and survive an admin having saved markup Telegram
     rejects — the shop stays open, and the admin is told which message broke."""
     markup = k.main_menu(cfg.is_admin(m.from_user.id))
+    if text is None:
+        text = await menu_text(m.from_user.id)
     try:
-        return await m.answer(await menu_text(m.from_user.id), reply_markup=markup)
+        return await m.answer(text, reply_markup=markup)
     except Exception as e:
         if "parse" not in str(e).lower() and "entity" not in str(e).lower() \
                 and "tag" not in str(e).lower():

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Sequence
 
@@ -10,6 +11,8 @@ try:                                   # only needed when running on Postgres
     import asyncpg
 except ImportError:                    # pragma: no cover
     asyncpg = None
+
+log = logging.getLogger("db")
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -138,6 +141,41 @@ def in_minutes(m: int) -> str:
 _PG = False
 _pool = None
 
+# Errors that mean "this connection is gone", as opposed to "your SQL is
+# wrong". Only these are retried: a query that failed on its merits would
+# fail again, and a write retried after it had actually landed would double.
+# asyncpg raises all of these *before* the statement reaches the server.
+def _retryable() -> tuple:
+    if asyncpg is None:
+        return ()
+    names = ("ConnectionDoesNotExistError", "InterfaceError",
+             "CannotConnectNowError", "ConnectionFailureError")
+    out = [getattr(asyncpg.exceptions, n) for n in names
+           if hasattr(asyncpg.exceptions, n)]
+    return tuple(out) + (ConnectionResetError,)
+
+
+_RETRY: tuple = ()
+
+
+async def _pg_run(fn, retries: int = 2):
+    """Run `fn(connection)` on a pooled connection, retrying a dead one.
+
+    Supabase recycles connections and restarts its pooler; without this, each
+    of those surfaces as an error message in a buyer's chat rather than a
+    momentary pause nobody notices.
+    """
+    last: Exception | None = None
+    for attempt in range(retries):
+        try:
+            async with _pool.acquire() as con:
+                return await fn(con)
+        except _RETRY as e:
+            last = e
+            log.warning("database connection lost (%s) — retrying", type(e).__name__)
+            await asyncio.sleep(0.3 * (attempt + 1))
+    raise last  # type: ignore[misc]
+
 _PG_SCHEMA_FIXES = (
     ("INTEGER PRIMARY KEY AUTOINCREMENT", "BIGSERIAL PRIMARY KEY"),
     ("tg_id       INTEGER PRIMARY KEY", "tg_id       BIGINT PRIMARY KEY"),
@@ -194,10 +232,23 @@ async def init(path: str) -> None:
         if asyncpg is None:
             raise RuntimeError("DATABASE_URL is Postgres but asyncpg isn't installed")
         _PG = True
-        # Supabase and most managed Postgres require TLS
+        global _RETRY
+        _RETRY = _retryable()
+        # Supabase's transaction pooler (port 6543) multiplexes one server
+        # connection across clients, so asyncpg's prepared statements collide
+        # with "prepared statement __asyncpg_stmt_N__ already exists" under
+        # load — intermittently, which is the worst way to find out. Turning
+        # the statement cache off is the supported way to run behind pgbouncer
+        # in transaction mode.
+        opts: dict = dict(min_size=1, max_size=8, command_timeout=30,
+                          # Supabase drops idle connections; recycle ours first
+                          # so the pool never hands out a dead one.
+                          max_inactive_connection_lifetime=300)
+        if ":6543" in url or "transaction" in url.lower():
+            opts["statement_cache_size"] = 0
+            log.info("transaction pooler detected — prepared statements disabled")
         try:
-            _pool = await asyncpg.create_pool(url, min_size=1, max_size=8,
-                                              command_timeout=30)
+            _pool = await asyncpg.create_pool(url, **opts)
         except OSError as e:
             # Supabase's direct host is IPv6-only and most PaaS egress is IPv4.
             # Crash rather than fall back to SQLite: a silent fallback would
@@ -215,8 +266,7 @@ async def init(path: str) -> None:
         schema = SCHEMA
         for a, b in _PG_SCHEMA_FIXES:
             schema = schema.replace(a, b)
-        async with _pool.acquire() as con:
-            await con.execute(schema)
+        await _pg_run(lambda con: con.execute(schema))
         await _migrate()
         return
 
@@ -294,8 +344,7 @@ async def _migrate() -> None:
 
 async def q(sql: str, args: Sequence[Any] = ()) -> list:
     if _PG:
-        async with _pool.acquire() as con:
-            return await con.fetch(_pg_sql(sql), *args)
+        return await _pg_run(lambda con: con.fetch(_pg_sql(sql), *args))
     cur = await _conn.execute(sql, args)
     rows = await cur.fetchall()
     await cur.close()
@@ -307,13 +356,20 @@ async def q1(sql: str, args: Sequence[Any] = ()):
     return rows[0] if rows else None
 
 
+def _dirty(sql: str) -> None:
+    """Any write that mentions `settings` drops the cache — some callers write
+    to it with a raw statement rather than through set_setting()."""
+    if "settings" in sql.lower():
+        invalidate_settings()
+
+
 async def ex_many(sql: str, rows: Sequence[Sequence[Any]]) -> int:
     """Batch insert. One round trip on either engine."""
     if not rows:
         return 0
+    _dirty(sql)
     if _PG:
-        async with _pool.acquire() as con:
-            await con.executemany(_pg_sql(sql), rows)
+        await _pg_run(lambda con: con.executemany(_pg_sql(sql), rows))
         return len(rows)
     await _conn.executemany(sql, rows)
     await _conn.commit()
@@ -322,14 +378,14 @@ async def ex_many(sql: str, rows: Sequence[Sequence[Any]]) -> int:
 
 async def ex_count(sql: str, args: Sequence[Any] = ()) -> int:
     """Run a DELETE/UPDATE and report how many rows it touched."""
+    _dirty(sql)
     if _PG:
-        async with _pool.acquire() as con:
-            tag = await con.execute(_pg_sql(sql), *args)
-            # asyncpg returns a status like "DELETE 3"
-            try:
-                return int(str(tag).rsplit(" ", 1)[-1])
-            except ValueError:
-                return 0
+        tag = await _pg_run(lambda con: con.execute(_pg_sql(sql), *args))
+        # asyncpg returns a status like "DELETE 3"
+        try:
+            return int(str(tag).rsplit(" ", 1)[-1])
+        except ValueError:
+            return 0
     cur = await _conn.execute(sql, args)
     await _conn.commit()
     n = cur.rowcount
@@ -343,17 +399,18 @@ _ID_TABLES = {"categories", "products", "stock", "orders", "withdrawals", "tiers
 
 async def ex(sql: str, args: Sequence[Any] = ()) -> int:
     """Run a statement. Returns the new row id for INSERTs that generate one."""
+    _dirty(sql)
     if _PG:
         import re as _re
         sql_pg = _pg_sql(sql)
         m = _re.match(r"\s*INSERT\s+INTO\s+(\w+)", sql_pg, _re.I)
-        async with _pool.acquire() as con:
-            if m and m.group(1).lower() in _ID_TABLES \
-                    and "RETURNING" not in sql_pg.upper():
-                row = await con.fetchrow(sql_pg + " RETURNING id", *args)
-                return row["id"] if row else 0
-            await con.execute(sql_pg, *args)
-            return 0
+        if m and m.group(1).lower() in _ID_TABLES \
+                and "RETURNING" not in sql_pg.upper():
+            row = await _pg_run(
+                lambda con: con.fetchrow(sql_pg + " RETURNING id", *args))
+            return row["id"] if row else 0
+        await _pg_run(lambda con: con.execute(sql_pg, *args))
+        return 0
     cur = await _conn.execute(sql, args)
     await _conn.commit()
     lastrow = cur.lastrowid
@@ -844,9 +901,44 @@ async def mark_seen(ref: str, order_id: int | None = None) -> bool:
 
 
 # -------------------------------------------------------------- settings
+# The settings table is read constantly — every message rendered walks the
+# whole flair slot list and every editable string is a lookup — and it changes
+# only when an admin saves something. One SELECT per lookup is invisible on
+# local SQLite and ruinous on a managed Postgres, where each one is a network
+# round trip. So the table is held in memory and dropped whenever anything
+# writes to it. The TTL is a backstop for the day this runs on more than one
+# instance, where another process could be the writer.
+_settings: dict[str, str] | None = None
+_settings_at: float = 0.0
+SETTINGS_TTL = 60.0
+
+
+def invalidate_settings() -> None:
+    """Force the next read to go back to the database."""
+    global _settings
+    _settings = None
+
+
+async def _settings_map() -> dict[str, str]:
+    global _settings, _settings_at
+    import time
+    if _settings is None or time.monotonic() - _settings_at > SETTINGS_TTL:
+        rows = await q("SELECT key, value FROM settings")
+        _settings = {r["key"]: r["value"] for r in rows}
+        _settings_at = time.monotonic()
+    return _settings
+
+
 async def setting(key: str, default: str = "") -> str:
-    row = await q1("SELECT value FROM settings WHERE key = ?", (key,))
-    return row["value"] if row else default
+    return (await _settings_map()).get(key, default)
+
+
+async def settings_prefix(prefix: str) -> dict[str, str]:
+    """Every setting under one prefix, keys stripped of it. One read, not one
+    per key — `flair:emoji:` alone has 116 of them."""
+    n = len(prefix)
+    return {k[n:]: v for k, v in (await _settings_map()).items()
+            if k.startswith(prefix)}
 
 
 async def set_setting(key: str, value: str) -> None:
@@ -855,6 +947,7 @@ async def set_setting(key: str, value: str) -> None:
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (key, value),
     )
+    invalidate_settings()
 
 
 # ----------------------------------------------------------------- stats

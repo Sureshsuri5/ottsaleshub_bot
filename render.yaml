@@ -1,6 +1,9 @@
 # Render Blueprint — push this repo to GitHub, then New → Blueprint.
-# Free web services sleep after ~15 min idle; the first Telegram update after a
-# sleep wakes it and Telegram retries, so nothing is lost, just delayed once.
+#
+# This is the Supabase configuration: no disk, no SQLite. The free web service
+# still sleeps after ~15 min idle, which stops the payment watcher, so
+# KEEPALIVE_MINUTES pings /health from inside the container to keep it awake.
+# Set it to 0 if you'd rather use an external uptime monitor.
 services:
   - type: web
     name: telegram-shop
@@ -12,19 +15,21 @@ services:
         sync: false          # paste in the dashboard, never in git
       - key: ADMIN_IDS
         sync: false
+      # Supabase → Connect → Session pooler, port 5432. The direct host is
+      # IPv6-only and Render cannot route to it.
+      - key: DATABASE_URL
+        sync: false
       - key: ADMIN_PANEL_TOKEN
         generateValue: true
       - key: BOT_MODE
         value: webhook
+      - key: KEEPALIVE_MINUTES
+        value: "10"
       - key: ENABLED_PROVIDERS
         value: balance,stars
       - key: FIAT_CURRENCY
         value: INR
       - key: CURRENCY_SYMBOL
         value: "₹"
-      - key: DB_PATH
-        value: /data/shop.db
-    disk:                    # free plan has no disk — delete this block if so,
-      name: shopdata         # and accept that data resets on redeploy
-      mountPath: /data
-      sizeGB: 1
+      - key: TIMEZONE
+        value: Asia/Kolkata

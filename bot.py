@@ -117,6 +117,7 @@ ADMIN_COMMANDS = USER_COMMANDS + [
     ("texts", "Edit bot messages"),
     ("flair", "Button icons"),
     ("ids", "Get sticker / emoji ids"),
+    ("backup", "Download a full database backup"),
 ]
 
 
@@ -152,6 +153,28 @@ async def _publish_menu_button(bot: Bot) -> None:
         log.warning("could not set the menu button: %s", e)
 
 
+async def keepalive() -> None:
+    """Hit our own /health on a timer so the platform sees inbound traffic.
+
+    Only useful on a host that sleeps when idle, and only possible when there's
+    a public URL to hit. Failures are logged at debug: a missed ping is not
+    worth a line in the log every few minutes.
+    """
+    import aiohttp
+    url = f"{cfg.webapp_url}/health"
+    log.info("keepalive pinging %s every %s min", url, cfg.keepalive)
+    while True:
+        await asyncio.sleep(cfg.keepalive * 60)
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(url, timeout=aiohttp.ClientTimeout(total=15)) as r:
+                    log.debug("keepalive -> %s", r.status)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.debug("keepalive failed: %s", e)
+
+
 async def main() -> None:
     if not cfg.bot_token:
         raise SystemExit("BOT_TOKEN is missing — copy .env.example to .env and fill it in.")
@@ -182,6 +205,10 @@ async def main() -> None:
     await _publish_menu_button(bot)
 
     tasks = [asyncio.create_task(watcher.run(bot))]
+    if cfg.keepalive > 0 and cfg.webapp_url.startswith("https://"):
+        tasks.append(asyncio.create_task(keepalive()))
+    elif cfg.keepalive > 0:
+        log.warning("KEEPALIVE_MINUTES is set but there's no public https URL to ping.")
     app = webapp.build_app(bot) if cfg.webapp_enabled else None
     runner = None
 

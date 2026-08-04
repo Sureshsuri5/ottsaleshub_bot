@@ -14,6 +14,7 @@ refuses one. Nothing breaks if you have neither Premium nor Fragment.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -291,13 +292,15 @@ def tokenise(html: str) -> str:
 
 
 async def slot_ids() -> dict[str, str]:
-    """Custom emoji id per slot, from the settings table."""
-    out = {}
-    for name in SLOTS:
-        v = await db.setting(f"flair:emoji:{name}", "")
-        if v.strip().isdigit():
-            out[name] = v.strip()
-    return out
+    """Custom emoji id per slot, from the settings table.
+
+    One read for all 116 slots. This used to be a lookup per slot, which meant
+    every rendered message cost 116 queries — unnoticeable on local SQLite,
+    several seconds on a managed Postgres.
+    """
+    saved = await db.settings_prefix("flair:emoji:")
+    return {name: v.strip() for name, v in saved.items()
+            if name in SLOTS and v.strip().isdigit()}
 
 
 async def render(text: str, decorated: bool = True) -> str:
@@ -348,6 +351,15 @@ async def send_sticker(bot: Bot, chat_id: int | str, slot: str, markup=None):
         return False
 
 
+async def intro_delay() -> float:
+    """How long the placeholder lingers before it is deleted. Never blocks the
+    welcome — the caller clears the beat in the background."""
+    try:
+        return max(0.0, min(float(await db.setting("flair:welcome_delay", "0")), 5))
+    except ValueError:
+        return 0.0
+
+
 async def intro(bot: Bot, chat_id: int) -> int | None:
     """The beat before the welcome message.
 
@@ -355,12 +367,16 @@ async def intro(bot: Bot, chat_id: int) -> int | None:
     renders a single-emoji message large and animated, which is what gives the
     pause its weight. Returns the message id so the caller can clear it once the
     welcome has landed. Set the emoji to '-' in the panel to turn this off.
+
+    This returns as soon as the placeholder is on screen. It does not sleep:
+    holding the beat here put the delay directly in front of the welcome, which
+    is the one message a buyer is waiting on. `clear_intro()` owns the wait now.
     """
     emoji = (await db.setting("flair:welcome_emoji", SLOTS["welcome"])).strip()
-    try:
-        delay = float(await db.setting("flair:welcome_delay", "1.2"))
-    except ValueError:
-        delay = 1.2
+    # '-' (stored as empty) is the documented off switch, so it turns the whole
+    # beat off — a sticker left on the slot no longer resurrects it
+    if not emoji or emoji == "-":
+        return None
 
     sent = await send_sticker(bot, chat_id, "welcome")
     msg_id = sent
@@ -385,20 +401,23 @@ async def intro(bot: Bot, chat_id: int) -> int | None:
             else:
                 log.warning("intro emoji failed: %s", e)
                 return None
-    if delay > 0:
-        import asyncio
-        await asyncio.sleep(min(delay, 5))
     return msg_id if isinstance(msg_id, int) else None
 
 
-async def clear_intro(bot: Bot, chat_id: int, msg_id: int | None) -> None:
+async def clear_intro(bot: Bot, chat_id: int, msg_id: int | None,
+                      delay: float = 0.0) -> None:
     """Remove the placeholder once the real message is on screen.
+
+    Run this as a background task: the wait happens *after* the welcome has
+    landed, so the beat costs the buyer nothing.
 
     Telegram only lets a bot delete its own messages for 48 hours; failing
     silently is fine because the worst case is a leftover emoji.
     """
     if not msg_id:
         return
+    if delay > 0:
+        await asyncio.sleep(delay)
     try:
         await bot.delete_message(chat_id, msg_id)
     except Exception as e:

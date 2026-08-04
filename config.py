@@ -140,6 +140,14 @@ class Config:
     # IANA name, e.g. Asia/Kolkata. Dates shown to buyers use this.
     timezone: str = os.getenv("TIMEZONE", "UTC")
 
+    # Render's free plan spins a service down after ~15 minutes without
+    # inbound traffic, which stops the payment watcher — a crypto transfer made
+    # while it sleeps isn't confirmed until something wakes it, and the order
+    # can expire first. Pinging our own public /health keeps it up. 0 = off.
+    # An external uptime monitor does the same job from outside; use that if
+    # you'd rather not spend the instance hours.
+    keepalive: int = int(os.getenv("KEEPALIVE_MINUTES", "0"))
+
     order_ttl: int = int(os.getenv("ORDER_TTL_MINUTES", "30"))
     # abandoned checkouts are deleted after this many days. 0 keeps them forever.
     keep_dead_orders: int = int(os.getenv("KEEP_ABANDONED_ORDERS_DAYS", "7"))
