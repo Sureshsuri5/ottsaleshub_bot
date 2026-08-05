@@ -302,8 +302,12 @@ def invoice_kb(oid: int, manual: bool, awaiting_ref: bool = False,
              else flair.label("check", "Check payment"), f"chk:{oid}",
              style="success" if not pay_url else None,
              icon_slot="paid" if manual else "check")],
-        [btn(flair.label("cancel", "Cancel order"), f"cancel:{oid}", style="danger",
-             icon_slot="cancel"), back_btn("Menu", "home")],
+        # One per row. Cancel is destructive and was sitting half-width beside
+        # Back, where a mistimed tap on a phone hits the wrong one — and on the
+        # payment screen the wrong one kills a paid-for order.
+        [back_btn("Back", back)],
+        [btn(flair.label("cancel", "Cancel Order"), f"cancel:{oid}", style="danger",
+             icon_slot="cancel")],
     )
 
 

@@ -139,12 +139,16 @@ async def deliver(bot: Bot, oid: int) -> bool:
     listing = "\n".join(f"{i}. <code>{_esc(line)}</code>"
                         for i, line in enumerate(payloads, 1))
 
+    # No keyboard here. This message arrives on its own, not as a screen the
+    # buyer navigated into, so a "Back" button has nowhere meaningful to go —
+    # and it sits directly under the delivered items, where the one thing they
+    # want to do is copy them. The order stays reachable from My Orders, which
+    # keeps its own Back button.
     if len(payloads) > 20 or len(body) > 3000:
         file = BufferedInputFile(body.encode(), filename=f"order_{oid}.txt")
         await _safe_doc(bot, o["user_id"], file, header)
     else:
-        await _safe(bot, o["user_id"], header + "\n" + listing,
-                    reply_markup=k.order_kb())
+        await _safe(bot, o["user_id"], header + "\n" + listing)
 
     # Per-sale DMs are off by default: a working shop makes this noise all day,
     # and the sales feed plus the admin panel already carry the same facts.
@@ -238,7 +242,6 @@ async def _safe(bot: Bot, chat_id: int, text: str, **kw) -> None:
 
 async def _safe_doc(bot: Bot, chat_id: int, file, caption: str) -> None:
     try:
-        await bot.send_document(chat_id, file, caption=caption,
-                                reply_markup=k.order_kb())
+        await bot.send_document(chat_id, file, caption=caption)
     except Exception as e:
         log.warning("doc to %s failed: %s", chat_id, e)
