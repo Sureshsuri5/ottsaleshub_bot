@@ -194,7 +194,7 @@ def shop_kb(prods, counts: dict[int, int], page: int = 0,
         rows.append(nav)
 
     rows.append([btn(flair.label("refresh", "Refresh Stock"), f"shop:{page}",
-                     icon_slot="refresh")])
+                     style="primary", icon_slot="refresh")])
     rows.append([back_btn("Back", "home")])
     return kb(*rows)
 
@@ -221,7 +221,7 @@ def qty_kb(pid: int, avail: int) -> InlineKeyboardMarkup:
     if avail < QTY_PRESETS[-1] and avail not in opts:
         opts.append(avail)
         opts.sort()
-    rows = [[btn(str(n), f"q:{pid}:{n}") for n in opts[i:i + 4]]
+    rows = [[btn(str(n), f"q:{pid}:{n}", style="primary") for n in opts[i:i + 4]]
             for i in range(0, len(opts), 4)]
     if avail > 1:
         rows.append([btn(flair.label("qty_custom", "Custom Amount"), f"qcustom:{pid}",
