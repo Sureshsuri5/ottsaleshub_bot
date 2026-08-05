@@ -299,12 +299,18 @@ def invoice_kb(oid: int, manual: bool, awaiting_ref: bool = False,
     if pay_url:
         rows.append([url_btn(flair.label("pay_now", "Pay now"), pay_url,
                              style="success", icon_slot="pay_now")])
+    # "I've paid" is the submit action on a manual rail — the buyer confirms and
+    # an admin reviews, so it has to be here. On an auto-verifying rail there is
+    # nothing to submit: the watcher polls every few seconds anyway, and the
+    # chain needs its confirmations regardless of who taps what. A "Check
+    # payment" button there mostly gets tapped too early and answers "not seen
+    # yet" to someone who just sent real money, which reads as a problem.
+    if manual:
+        rows.append([btn(flair.label("paid", "I've paid"), f"chk:{oid}",
+                         style="success" if not pay_url else None,
+                         icon_slot="paid")])
     return kb(
         *rows,
-        [btn(flair.label("paid", "I've paid") if manual
-             else flair.label("check", "Check payment"), f"chk:{oid}",
-             style="success" if not pay_url else None,
-             icon_slot="paid" if manual else "check")],
         # One per row. Cancel is destructive and was sitting half-width beside
         # Back, where a mistimed tap on a phone hits the wrong one — and on the
         # payment screen the wrong one kills a paid-for order.
