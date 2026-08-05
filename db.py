@@ -445,7 +445,7 @@ async def find_user(term: str):
     term = term.strip().lstrip("@")
     if term.isdigit():
         return await q1("SELECT * FROM users WHERE tg_id = ?", (int(term),))
-    return await q1("SELECT * FROM users WHERE username = ? COLLATE NOCASE", (term,))
+    return await q1("SELECT * FROM users WHERE LOWER(username) = LOWER(?)", (term,))
 
 
 async def add_balance(tg_id: int, delta: float) -> None:
@@ -1067,8 +1067,8 @@ async def list_users(term: str = "", limit: int = 50):
     if term.isdigit():
         return await q("SELECT * FROM users WHERE CAST(tg_id AS TEXT) LIKE ? LIMIT ?",
                        (f"%{term}%", limit))
-    return await q("SELECT * FROM users WHERE username LIKE ? COLLATE NOCASE "
-                   "OR first_name LIKE ? COLLATE NOCASE LIMIT ?",
+    return await q("SELECT * FROM users WHERE LOWER(username) LIKE LOWER(?) "
+                   "OR LOWER(first_name) LIKE LOWER(?) LIMIT ?",
                    (f"%{term}%", f"%{term}%", limit))
 
 
