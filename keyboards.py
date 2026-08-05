@@ -103,8 +103,12 @@ def notify_kb(u) -> InlineKeyboardMarkup:
         on = bool(u[field])
         return [btn(f"{'🔔' if on else '🔕'} {label}: {'On' if on else 'Off'}",
                     f"pf:toggle:{field}", style="success" if on else None)]
-    return kb(row("notify_orders", "Order updates"),
-              row("notify_promos", "Announcements"),
+    # Order updates deliberately isn't here. It carries payment confirmations
+    # and the delivered items themselves, and a buyer who switches it off
+    # silently stops receiving what they paid for.
+    return kb(row("notify_stock", "Stock Alerts"),
+              row("notify_promos", "Info Alerts"),
+              row("notify_referral", "Referral Bonus"),
               [back_btn("Back", "menu:profile")])
 
 
@@ -199,13 +203,22 @@ def shop_kb(prods, counts: dict[int, int], page: int = 0,
     return kb(*rows)
 
 
-def product_kb(pid: int, in_stock: bool) -> InlineKeyboardMarkup:
+def product_kb(pid: int, in_stock: bool,
+               watching: bool = False) -> InlineKeyboardMarkup:
     """Two buttons only. Quantity moves to the payment step, where the running
-    total is already on screen and the choice actually costs something."""
+    total is already on screen and the choice actually costs something.
+
+    Sold out swaps Buy for a restock alert — otherwise the page is a dead end
+    and the interested buyer simply leaves.
+    """
     rows = []
     if in_stock:
         rows.append([btn(flair.label("buy", "Buy Now"), f"buy:{pid}", style="primary",
                          icon_slot="buy")])
+    else:
+        rows.append([btn("🔕 Cancel restock alert" if watching
+                         else "🔔 Notify me when back in stock",
+                         f"watch:{pid}", style=None if watching else "primary")])
     rows.append([back_btn("Back to Store", "shop")])
     return kb(*rows)
 

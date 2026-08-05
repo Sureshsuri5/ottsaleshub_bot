@@ -211,6 +211,10 @@ async def _pay_referrer(bot: Bot, o, deposit: bool = False) -> None:
         return
 
     await db.credit_referral(inviter, round(reward, 2))
+    # The money is credited either way — only the message is optional.
+    inv = await db.get_user(inviter)
+    if inv and not inv["notify_referral"]:
+        return
     r = await db.referral_stats(inviter)
     await _safe(bot, inviter,
                 f"⭐ <b>Referral reward</b>\n\n"
@@ -266,6 +270,32 @@ async def _credit_overpayment(bot: Bot, o, notify: bool = True) -> float:
     if notify:
         await _notify_overpay(bot, o, extra)
     return extra
+
+
+async def notify_restock(bot: Bot) -> None:
+    """Tell everyone waiting that a sold-out product is available again.
+
+    Driven from the waitlist rather than hooked into each place stock is added
+    — admin panel, web panel, bulk upload — so no route can add stock without
+    the alert going out.
+    """
+    for pid in await db.watched_products():
+        p = await db.product(pid)
+        if not p or not p["is_active"]:
+            continue
+        avail = await db.available(pid)
+        if avail <= 0 and not p["infinite"]:
+            continue
+        for uid in await db.take_watchers(pid):
+            u = await db.get_user(uid)
+            if u and not u["notify_stock"]:
+                continue
+            await _safe(bot, uid, await texts.t(
+                "restock_alert", product=_esc(p["name"]),
+                emoji=p["emoji"] or "", stock=avail,
+                price=cfg.money(p["price"])),
+                reply_markup=k.kb([k.btn("🛒 Buy now", f"p:{pid}", style="primary")]))
+        log.info("restock alert sent for product %s", pid)
 
 
 async def notify_underpaid(bot: Bot) -> None:

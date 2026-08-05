@@ -116,6 +116,14 @@ CREATE TABLE IF NOT EXISTS withdrawals (
 );
 CREATE INDEX IF NOT EXISTS idx_wd_status ON withdrawals(status, id DESC);
 
+-- buyers waiting for a sold-out product to come back
+CREATE TABLE IF NOT EXISTS waitlist (
+    user_id    INTEGER NOT NULL REFERENCES users(tg_id),
+    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, product_id)
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -185,6 +193,8 @@ _PG_SCHEMA_FIXES = (
      "user_id         BIGINT  NOT NULL REFERENCES users(tg_id)"),
     ("user_id      INTEGER NOT NULL REFERENCES users(tg_id)",
      "user_id      BIGINT  NOT NULL REFERENCES users(tg_id)"),
+    ("user_id    INTEGER NOT NULL REFERENCES users(tg_id)",
+     "user_id    BIGINT  NOT NULL REFERENCES users(tg_id)"),
     ("REAL", "DOUBLE PRECISION"),
     ("(datetime('now'))", "(to_char(now() at time zone 'utc',"
                           " 'YYYY-MM-DD HH24:MI:SS'))"),
@@ -326,6 +336,8 @@ async def _migrate() -> None:
         "ALTER TABLE products ADD COLUMN unit TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE users ADD COLUMN notify_orders INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE users ADD COLUMN notify_promos INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE users ADD COLUMN notify_stock INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE users ADD COLUMN notify_referral INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE users ADD COLUMN api_key TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE users ADD COLUMN ref_available REAL NOT NULL DEFAULT 0",
         "ALTER TABLE users ADD COLUMN ref_transferred REAL NOT NULL DEFAULT 0",
@@ -560,7 +572,8 @@ async def activate(tg_id: int) -> None:
 
 
 async def set_notify(tg_id: int, field: str, on: bool) -> None:
-    if field not in {"notify_orders", "notify_promos"}:
+    if field not in {"notify_orders", "notify_promos", "notify_stock",
+                     "notify_referral"}:
         return
     await ex(f"UPDATE users SET {field} = ? WHERE tg_id = ?", (1 if on else 0, tg_id))
 
@@ -964,6 +977,45 @@ async def mark_seen(ref: str, order_id: int | None = None) -> bool:
                 or "duplicate" in str(e).lower() or "integrity" in type(e).__name__.lower():
             return False
         raise
+
+
+# -------------------------------------------------------------- waitlist
+async def watch_product(uid: int, pid: int) -> bool:
+    """Ask to be told when this product is back. Returns False if already on
+    the list, so the caller can say so rather than claiming a second success."""
+    try:
+        await ex("INSERT INTO waitlist (user_id, product_id) VALUES (?, ?)", (uid, pid))
+        return True
+    except Exception as e:
+        if "unique" in str(e).lower() or "duplicate" in str(e).lower():
+            return False
+        raise
+
+
+async def unwatch_product(uid: int, pid: int) -> None:
+    await ex("DELETE FROM waitlist WHERE user_id = ? AND product_id = ?", (uid, pid))
+
+
+async def is_watching(uid: int, pid: int) -> bool:
+    return bool(await q1("SELECT 1 FROM waitlist WHERE user_id = ? AND product_id = ?",
+                         (uid, pid)))
+
+
+async def watched_products() -> list[int]:
+    rows = await q("SELECT DISTINCT product_id FROM waitlist")
+    return [r["product_id"] for r in rows]
+
+
+async def take_watchers(pid: int) -> list[int]:
+    """Everyone waiting on this product, removed from the list as they're read.
+
+    Taken rather than read: the notification goes out once, and a buyer who
+    misses it can join the list again. Leaving rows behind would mean a second
+    restock re-notifies people who already had their chance.
+    """
+    rows = await q("SELECT user_id FROM waitlist WHERE product_id = ?", (pid,))
+    await ex("DELETE FROM waitlist WHERE product_id = ?", (pid,))
+    return [r["user_id"] for r in rows]
 
 
 # -------------------------------------------------------------- settings

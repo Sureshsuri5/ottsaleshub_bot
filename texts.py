@@ -93,6 +93,12 @@ MESSAGES: dict[str, Msg] = {
         "Quantity question", "Checkout", ("unit",)),
     "summary_title": Msg("{{m_receipt}} <b>Order Summary</b>", "Order summary title", "Checkout"),
     "pay_choose": Msg("{{m_card}} Choose a payment method:", "Payment prompt", "Checkout"),
+    "restock_alert": Msg(
+        "{{m_ok}} <b>Back in stock</b>\n\n"
+        "{emoji} <b>{product}</b> is available again at <b>{price}</b>.\n\n"
+        "<i>You asked to be told. Stock goes fast — first come, first served.</i>",
+        "Back-in-stock alert", "Shop",
+        ("product", "emoji", "stock", "price")),
     "pay_rest": Msg(
         "{{m_warn}} Pay the remaining amount via:",
         "Prompt when wallet covers part of an order", "Checkout", ()),

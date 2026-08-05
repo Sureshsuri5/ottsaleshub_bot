@@ -41,6 +41,11 @@ async def _tick(bot: Bot) -> None:
 
     # buyers who sent too little hear about it in the same pass
     try:
+        await delivery.notify_restock(bot)
+    except Exception:
+        log.exception("could not send restock alerts")
+
+    try:
         await delivery.notify_underpaid(bot)
     except Exception:
         log.exception("could not send part-payment notices")

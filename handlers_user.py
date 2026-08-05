@@ -162,9 +162,11 @@ async def start(m: Message, state: FSMContext):
     if len(parts) > 1 and parts[1].startswith("p_") and parts[1][2:].isdigit():
         p = await db.product(int(parts[1][2:]))
         if p and p["is_active"]:
+            avail = await db.available(p["id"])
             await m.answer(await product_text(p, m.from_user.id),
-                           reply_markup=k.product_kb(p["id"],
-                                                     await db.available(p["id"]) > 0))
+                           reply_markup=k.product_kb(
+                               p["id"], avail > 0,
+                               await db.is_watching(m.from_user.id, p["id"])))
             return
 
     if len(parts) > 1 and parts[1].startswith("ref_"):
@@ -173,7 +175,10 @@ async def start(m: Message, state: FSMContext):
         already_a_customer = await db.delivered_purchases(m.from_user.id) > 0
         if inviter and not already_a_customer \
                 and await db.set_referrer(m.from_user.id, inviter):
+            inv = await db.get_user(inviter)
             try:
+                if inv and not inv["notify_referral"]:
+                    raise StopIteration      # binding stands, message doesn't
                 await m.bot.send_message(
                     inviter, f"⭐ <b>{esc(m.from_user.first_name or 'Someone')}</b> joined "
                              f"through your link.\nYou earn when they make their first purchase.")
@@ -326,7 +331,8 @@ async def _render_product(c: CallbackQuery, pid: int, state: FSMContext):
     await state.update_data(pid=pid)
     avail = await db.available(pid)
     await show(c, await product_text(p, c.from_user.id),
-               k.product_kb(pid, avail > 0 or bool(p["infinite"])))
+               k.product_kb(pid, avail > 0 or bool(p["infinite"]),
+                            await db.is_watching(c.from_user.id, pid)))
     await c.answer()
 
 
@@ -691,6 +697,31 @@ async def got_ref(m: Message, state: FSMContext):
         m.bot, f"🔎 <b>Review needed</b> — order #{oid} ({o['provider']})\n"
                f"User <code>{m.from_user.id}</code> · {amt}\n"
                f"Ref: <code>{esc(ref)}</code>{hint}")
+
+
+@router.callback_query(F.data.startswith("watch:"))
+async def toggle_watch(c: CallbackQuery, state: FSMContext):
+    """Join or leave the restock list for a sold-out product."""
+    pid = int(c.data.split(":")[1])
+    p = await db.product(pid)
+    if not p or not p["is_active"]:
+        return await c.answer("Product unavailable.", show_alert=True)
+    u = await db.get_user(c.from_user.id)
+    if await db.is_watching(c.from_user.id, pid):
+        await db.unwatch_product(c.from_user.id, pid)
+        await c.answer("You won't be notified.")
+    else:
+        await db.watch_product(c.from_user.id, pid)
+        # Say so plainly rather than let them wait on a message that the
+        # Stock Alerts switch is quietly blocking.
+        await c.answer("👍 We'll message you when it's back."
+                       if (u and u["notify_stock"]) else
+                       "Added — but Stock Alerts are off in your profile.",
+                       show_alert=True)
+    avail = await db.available(pid)
+    await show(c, await product_text(p, c.from_user.id),
+               k.product_kb(pid, avail > 0 or bool(p["infinite"]),
+                            await db.is_watching(c.from_user.id, pid)))
 
 
 @router.callback_query(F.data.startswith("txref:"))
