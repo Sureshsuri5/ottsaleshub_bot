@@ -329,6 +329,9 @@ async def _migrate() -> None:
         "ALTER TABLE products ADD COLUMN keywords TEXT NOT NULL DEFAULT ''",
         # what actually arrived, when that differs from what was asked for
         "ALTER TABLE orders ADD COLUMN received REAL NOT NULL DEFAULT 0",
+        # the shortfall the buyer was last told about, so a partial payment is
+        # reported once rather than on every poll
+        "ALTER TABLE orders ADD COLUMN short_notified REAL NOT NULL DEFAULT 0",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_code ON orders(code)",
     ):
         try:
@@ -868,7 +871,7 @@ async def pending_reviews():
 async def expire_stale() -> list[int]:
     rows = await q(
         "SELECT id FROM orders WHERE status = 'pending' AND expires_at IS NOT NULL "
-        "AND expires_at < datetime('now')"
+        "AND expires_at < datetime('now') AND COALESCE(received, 0) = 0"
     )
     ids = [r["id"] for r in rows]
     if ids:

@@ -735,20 +735,25 @@ class EvmTokenProvider:
             o = by_addr.get(tx["to"].lower())
             if not o:
                 continue
-            want = float(o["pay_amount"] or 0)
-            # An open-amount deposit takes whatever arrives. A purchase must be
-            # covered — a short payment is held rather than delivered, and the
-            # buyer keeps the address, so topping it up completes the order.
-            if want and tx["value"] + 1e-6 < want:
-                log.warning("order %s underpaid: %s of %s at %s",
-                            o["id"], tx["value"], want, tx["to"])
+            # Claim the transfer first. Counting it before it's claimed would
+            # let the same transfer be added twice across two polls.
+            if not await db.mark_seen(tx_key(self.code, tx["id"]), o["id"]):
                 continue
-            if await db.mark_seen(tx_key(self.code, tx["id"]), o["id"]):
-                # record what landed, not what was quoted — delivery credits
-                # any surplus to the buyer's wallet
-                await db.set_order(o["id"],
-                                   received=round(tx["value"] * cfg.usdt_rate, 2))
-                confirmed.append((o["id"], tx["id"]))
+
+            fiat = round(tx["value"] * cfg.usdt_rate, 2)
+            total = round(float(o["received"] or 0) + fiat, 2)
+            await db.set_order(o["id"], received=total)
+
+            want = float(o["amount"] or 0)
+            # An open-amount deposit takes whatever arrives. A purchase must be
+            # covered — and payments accumulate, so a buyer who sends too
+            # little completes the order by sending the rest to the same
+            # address rather than losing what they already sent.
+            if want and total + 0.01 < want:
+                log.warning("order %s part-paid: %s of %s at %s",
+                            o["id"], total, want, tx["to"])
+                continue
+            confirmed.append((o["id"], tx["id"]))
         return confirmed
 
     async def poll(self, orders) -> list[tuple[int, str]]:

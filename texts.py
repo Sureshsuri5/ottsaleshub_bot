@@ -149,6 +149,16 @@ MESSAGES: dict[str, Msg] = {
         "{tx_line}",
         "Top-up confirmed message", "Delivery",
         ("amount", "balance", "network", "txid", "tx_line", "tx_link")),
+    "underpaid_notice": Msg(
+        "⚠️ <b>Payment received, but it's short</b>\n\n"
+        "{{tu_added}} Received so far: <b>{sent}</b>\n"
+        "{{dep_amount}} Order total: <b>{total}</b>\n"
+        "❗ Still needed: <b>{short}</b>\n\n"
+        "Send the remaining <b>{short}</b> to the <b>same address</b> and your "
+        "order completes automatically. Nothing you've sent is lost.\n\n"
+        "<code>{address}</code>",
+        "Part-payment received", "Delivery",
+        ("sent", "total", "short", "address", "oid")),
     "overpay_credited": Msg(
         "{{tu_added}} You sent <b>{sent}</b>, which is <b>{extra}</b> more than "
         "the order total.\n"

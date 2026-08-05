@@ -258,6 +258,35 @@ async def _credit_overpayment(bot: Bot, o, notify: bool = True) -> float:
     return extra
 
 
+async def notify_underpaid(bot: Bot) -> None:
+    """Tell buyers whose payment fell short, once per new amount received.
+
+    Silence here is expensive: the buyer thinks they've paid, the shop thinks
+    nothing happened, and the money is sitting on an address neither of them is
+    looking at. `short_notified` records the figure they were last told, so a
+    second partial payment produces one new message rather than a repeat every
+    poll.
+    """
+    rows = await db.q(
+        "SELECT id, code, user_id, amount, received, pay_address FROM orders "
+        "WHERE status = 'pending' AND COALESCE(received, 0) > 0 "
+        "AND COALESCE(amount, 0) > 0 AND COALESCE(received, 0) < amount "
+        "AND COALESCE(short_notified, 0) < COALESCE(received, 0)")
+    for o in rows:
+        short = round(float(o["amount"]) - float(o["received"]), 2)
+        await db.set_order(o["id"], short_notified=float(o["received"]))
+        await _safe(bot, o["user_id"], await texts.t(
+            "underpaid_notice",
+            sent=cfg.money(o["received"]), total=cfg.money(o["amount"]),
+            short=cfg.money(short), address=o["pay_address"] or "",
+            oid=o["code"] or o["id"]))
+        await notify_admins(
+            bot, f"⚠️ <b>Part payment</b> — order #{o['code'] or o['id']}\n"
+                 f"{cfg.money(o['received'])} of {cfg.money(o['amount'])}, "
+                 f"{cfg.money(short)} outstanding")
+        log.info("order %s part-paid, buyer told they owe %s", o["id"], short)
+
+
 async def _notify_overpay(bot: Bot, o, extra: float) -> None:
     """Sent after the goods, so the buyer reads confirmation then change —
     crediting has to happen earlier than this to keep the balance line honest,

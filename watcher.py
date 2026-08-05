@@ -39,6 +39,12 @@ async def _tick(bot: Bot) -> None:
             log.info("pruned %s abandoned order(s) older than %s days",
                      removed, cfg.keep_dead_orders)
 
+    # buyers who sent too little hear about it in the same pass
+    try:
+        await delivery.notify_underpaid(bot)
+    except Exception:
+        log.exception("could not send part-payment notices")
+
     for oid in await db.expire_stale():
         o = await db.order(oid)
         try:
