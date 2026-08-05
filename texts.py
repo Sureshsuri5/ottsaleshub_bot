@@ -140,7 +140,10 @@ MESSAGES: dict[str, Msg] = {
         "💳 Remaining Balance: <b>{balance}</b>\n\n"
         "⏳ Delivering your items…",
         "Payment verified (before delivery)", "Delivery",
-        ("amount", "cost", "balance", "product", "qty", "oid")),
+        # {balance} is what this payment left over: paid minus cost, so an
+        # exact payment reads 0. {wallet} is the running wallet balance
+        # instead, if you'd rather show that.
+        ("amount", "cost", "balance", "wallet", "product", "qty", "oid")),
     "topup_confirmed": Msg(
         "{{tu_title}} <b>Deposit Verified!</b>\n\n"
         "{{tu_added}} Credited: <b>{amount}</b>\n"

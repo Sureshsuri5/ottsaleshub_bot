@@ -115,7 +115,12 @@ async def deliver(bot: Bot, oid: int) -> bool:
         "order_placed",
         amount=cfg.money(paid),
         cost=cfg.money(o["amount"]),
-        balance=cfg.money(buyer["balance"] if buyer else 0),
+        # what this payment left over, not the wallet total — a buyer reading
+        # "Remaining Balance" straight after "Paid" means change from what they
+        # just sent, and carrying an older credit into that line reads as an
+        # error in the arithmetic
+        balance=cfg.money(max(0.0, round(paid - float(o["amount"] or 0), 2))),
+        wallet=cfg.money(buyer["balance"] if buyer else 0),
         product=_esc(p["name"]) if p else "—",
         qty=o["qty"], oid=o["code"] or oid))
 
