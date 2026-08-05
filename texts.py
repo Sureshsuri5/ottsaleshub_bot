@@ -94,7 +94,9 @@ MESSAGES: dict[str, Msg] = {
     "summary_title": Msg("{{m_receipt}} <b>Order Summary</b>", "Order summary title", "Checkout"),
     "pay_choose": Msg("{{m_card}} Choose a payment method:", "Payment prompt", "Checkout"),
     "order_cancelled": Msg(
-        "Order #{oid} cancelled.", "Order cancelled", "Checkout", ("oid",)),
+        "{{m_error}} <b>Order Cancelled</b>\n\n"
+        "Your order has been cancelled. No payment is required.",
+        "Order cancelled", "Checkout", ("oid",)),
     "order_expired": Msg(
         "{{m_clock}} Order #{oid} expired unpaid.", "Order expired", "Checkout", ("oid",)),
     "ref_received": Msg(

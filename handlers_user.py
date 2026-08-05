@@ -231,7 +231,8 @@ async def noop(c: CallbackQuery):
 @router.callback_query(F.data == "fsmcancel")
 async def fsm_cancel(c: CallbackQuery, state: FSMContext):
     await state.clear()
-    await show(c, "Cancelled.", k.home_kb())
+    await show(c, await texts.t("order_cancelled", oid=""),
+               k.main_menu(cfg.is_admin(c.from_user.id)))
     await c.answer()
 
 
@@ -708,7 +709,7 @@ async def cancel_order(c: CallbackQuery):
         except Exception:
             pass
         await c.message.answer(await texts.t("order_cancelled", oid=oid),
-                               reply_markup=k.home_kb())
+                               reply_markup=k.main_menu(cfg.is_admin(c.from_user.id)))
     await c.answer()
 
 
