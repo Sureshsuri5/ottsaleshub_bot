@@ -368,6 +368,53 @@ async def backup_cmd(m: Message, state: FSMContext):
         reply_markup=k.back())
 
 
+@router.message(Command("emojitest"))
+async def emoji_test(m: Message, state: FSMContext):
+    """Send one custom emoji and report exactly what Telegram says.
+
+    The failure mode this exists for is silent: if the bot isn't allowed to use
+    custom emoji, the message still sends and the reader just sees the plain
+    fallback — nothing is logged and nothing looks wrong. Asking Telegram
+    directly is the only way to tell "not allowed" from "not configured".
+    """
+    await state.clear()
+    import flair as fl
+
+    ids = await fl.slot_ids()
+    if not ids:
+        return await m.answer(
+            "No custom emoji are saved.\n\n"
+            "Set one first: /flair → pick a slot → forward a message "
+            "containing the premium emoji.")
+
+    slot, eid = next(iter(ids.items()))
+    plain = fl.SLOTS.get(slot, "⭐")
+    lines = [f"🧪 <b>Premium emoji test</b>\n",
+             f"Slot: <code>{esc(slot)}</code>",
+             f"Emoji id: <code>{esc(eid)}</code>",
+             f"State: {fl.custom_state()}\n"]
+    try:
+        sent = await m.bot.send_message(
+            m.chat.id, f'<tg-emoji emoji-id="{eid}">{plain}</tg-emoji> test')
+        # Telegram echoes back the entities it actually accepted. If the list
+        # comes back without a custom_emoji entity, it stripped it — the send
+        # "succeeded" and the buyer still sees a plain emoji.
+        kinds = [e.type for e in (sent.entities or [])]
+        if "custom_emoji" in kinds:
+            lines.append("✅ Telegram accepted it. Premium emoji are working — "
+                         "if a screen still looks plain, that slot has no id set.")
+        else:
+            lines.append(
+                "⚠️ Telegram accepted the message but <b>removed the emoji</b>.\n\n"
+                "This bot isn't permitted to use custom emoji. A bot may only "
+                "use them if it has a username bought on Fragment. There is no "
+                "setting that changes this — the plain fallback is what buyers "
+                "will see.")
+    except Exception as e:
+        lines.append(f"❌ Telegram rejected it:\n<code>{esc(str(e)[:400])}</code>")
+    await m.answer("\n".join(lines), reply_markup=k.back())
+
+
 @router.message(Command("wallet"))
 async def wallet_cmd(m: Message, state: FSMContext):
     """Which derived accounts actually hold money, and where to find them.

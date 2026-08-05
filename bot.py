@@ -119,6 +119,7 @@ ADMIN_COMMANDS = USER_COMMANDS + [
     ("ids", "Get sticker / emoji ids"),
     ("backup", "Download a full database backup"),
     ("wallet", "Which deposit accounts hold funds"),
+    ("emojitest", "Check premium emoji against Telegram"),
 ]
 
 
