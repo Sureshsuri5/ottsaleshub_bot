@@ -179,6 +179,12 @@ async def _pg_run(fn, retries: int = 2):
 _PG_SCHEMA_FIXES = (
     ("INTEGER PRIMARY KEY AUTOINCREMENT", "BIGSERIAL PRIMARY KEY"),
     ("tg_id       INTEGER PRIMARY KEY", "tg_id       BIGINT PRIMARY KEY"),
+    # every foreign key onto users(tg_id) has to be 64-bit as well, or the
+    # child column silently stays int4 and rejects modern account ids
+    ("user_id         INTEGER NOT NULL REFERENCES users(tg_id)",
+     "user_id         BIGINT  NOT NULL REFERENCES users(tg_id)"),
+    ("user_id      INTEGER NOT NULL REFERENCES users(tg_id)",
+     "user_id      BIGINT  NOT NULL REFERENCES users(tg_id)"),
     ("REAL", "DOUBLE PRECISION"),
     ("(datetime('now'))", "(to_char(now() at time zone 'utc',"
                           " 'YYYY-MM-DD HH24:MI:SS'))"),
@@ -313,7 +319,7 @@ async def _migrate() -> None:
     and that's the expected outcome on every start after the first.
     """
     for stmt in (
-        "ALTER TABLE users ADD COLUMN referred_by INTEGER",
+        "ALTER TABLE users ADD COLUMN referred_by BIGINT",
         "ALTER TABLE users ADD COLUMN ref_earned REAL NOT NULL DEFAULT 0",
         "ALTER TABLE products ADD COLUMN emoji TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE products ADD COLUMN icon_emoji_id TEXT NOT NULL DEFAULT ''",
@@ -335,6 +341,12 @@ async def _migrate() -> None:
         # wallet balance already taken for this order, so a cancellation can
         # hand it back and a receipt can show the real total
         "ALTER TABLE orders ADD COLUMN balance_used REAL NOT NULL DEFAULT 0",
+        # Postgres-only: widen id columns created before this was fixed. These
+        # are no-ops on SQLite, which ignores column widths entirely.
+        "ALTER TABLE orders ALTER COLUMN user_id TYPE BIGINT",
+        "ALTER TABLE withdrawals ALTER COLUMN user_id TYPE BIGINT",
+        "ALTER TABLE users ALTER COLUMN tg_id TYPE BIGINT",
+        "ALTER TABLE users ALTER COLUMN referred_by TYPE BIGINT",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_code ON orders(code)",
     ):
         try:
