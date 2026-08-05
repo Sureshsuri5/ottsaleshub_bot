@@ -9,16 +9,54 @@ from __future__ import annotations
 import logging
 
 from aiogram import Bot
-from aiogram.types import BufferedInputFile
+from aiogram.types import BufferedInputFile, LinkPreviewOptions
 
 import flair
 import keyboards as k
 import texts
+import timefmt
 
 import db
 from config import cfg
 
 log = logging.getLogger(__name__)
+
+
+async def _tx_fields(o, short: bool = True) -> dict:
+    """Transaction placeholders shared by the deposit and delivery messages.
+
+    `tx_line` is the whole row, pre-formatted and blank when there's nothing to
+    show — a template can't skip a line on its own.
+
+    An order paid from wallet balance has no hash of its own, so the most
+    recent verified deposit is shown instead: that is the payment the buyer
+    actually made, and it's what they'd quote in a support message. Delete
+    {tx_line} from the message in /texts if you'd rather not show it.
+    """
+    import payments
+    txid = (o["external_ref"] or "").strip()
+    code = o["provider"]
+    if not txid and code == "balance":
+        row = await db.q1(
+            "SELECT provider, external_ref FROM orders WHERE user_id = ? "
+            "AND kind = 'topup' AND status = 'delivered' "
+            "AND external_ref IS NOT NULL AND external_ref != '' "
+            "ORDER BY id DESC LIMIT 1", (o["user_id"],))
+        if row:
+            txid, code = (row["external_ref"] or "").strip(), row["provider"]
+
+    link = payments.explorer_url(code, txid)
+    shown = (f"{txid[:10]}…{txid[-8:]}" if short and len(txid) > 22 else txid)
+    if link and short:
+        line = f'\n🔗 Tx: <a href="{link}">{_esc(shown)}</a>'
+    elif txid:
+        # full hash, on its own line: it wraps rather than being cut off, and
+        # tapping it copies the whole thing for a support message
+        line = f"\n🔗 TxID:\n<code>{_esc(txid)}</code>"
+    else:
+        line = ""
+    return dict(txid=_esc(txid), tx_link=link, tx_line=line,
+                network=_esc(payments.network_label(o["provider"])))
 
 
 async def settle(bot: Bot, oid: int, ref: str | None = None) -> bool:
@@ -39,11 +77,17 @@ async def settle(bot: Bot, oid: int, ref: str | None = None) -> bool:
             await _pay_referrer(bot, o, deposit=True)
         await db.set_order(oid, status="delivered")
         user = await db.get_user(o["user_id"])
+        o = await db.order(oid)          # re-read: external_ref was just set
+        tx = await _tx_fields(o)
+        # Link previews are off globally, but the explorer card under a deposit
+        # is the buyer verifying their own money arrived — worth the exception.
+        preview = LinkPreviewOptions(is_disabled=False, url=tx["tx_link"],
+                                     show_above_text=False) if tx["tx_link"] else None
         await _safe(bot, o["user_id"],
                     await texts.t("topup_confirmed",
                                   amount=cfg.money(o["amount"]),
-                                  balance=cfg.money(user["balance"])),
-                    reply_markup=k.home_kb())
+                                  balance=cfg.money(user["balance"]), **tx),
+                    reply_markup=k.home_kb(), link_preview_options=preview)
         if await db.setting("admin_sale_alerts", "0") == "1":
             await notify_admins(bot, f"💰 Top-up #{oid} — {cfg.money(o['amount'])} "
                                      f"by <code>{o['user_id']}</code> via {o['provider']}")
@@ -55,6 +99,17 @@ async def settle(bot: Bot, oid: int, ref: str | None = None) -> bool:
 async def deliver(bot: Bot, oid: int) -> bool:
     o = await db.order(oid)
     p = await db.product(o["product_id"]) if o["product_id"] else None
+
+    # Confirm the money before touching stock. Allocation is fast, but if it
+    # fails the buyer has still seen that their payment landed.
+    buyer = await db.get_user(o["user_id"])
+    await _safe(bot, o["user_id"], await texts.t(
+        "order_placed",
+        amount=cfg.money(o["amount"]),
+        cost=cfg.money(o["amount"]),
+        balance=cfg.money(buyer["balance"] if buyer else 0),
+        product=_esc(p["name"]) if p else "—",
+        qty=o["qty"], oid=o["code"] or oid))
 
     if p is None:
         await _refund(bot, o, "the product is no longer available")
@@ -74,13 +129,21 @@ async def deliver(bot: Bot, oid: int) -> bool:
 
     header = await texts.t("delivered_body", oid=o["code"] or oid,
                            product=_esc(p["name"]), qty=o["qty"],
-                           amount=cfg.money(o["amount"]), method=_esc(o["provider"]))
+                           emoji=p["emoji"] or "",
+                           amount=cfg.money(o["amount"]), method=_esc(o["provider"]),
+                           date=timefmt.local_dt(o["paid_at"] or o["created_at"]),
+                           **await _tx_fields(o, short=False))
+
+    # Numbered, one per line, each its own copyable block. A buyer with four
+    # keys needs to know which is which; a single <pre> blob makes them count.
+    listing = "\n".join(f"{i}. <code>{_esc(line)}</code>"
+                        for i, line in enumerate(payloads, 1))
 
     if len(payloads) > 20 or len(body) > 3000:
         file = BufferedInputFile(body.encode(), filename=f"order_{oid}.txt")
         await _safe_doc(bot, o["user_id"], file, header)
     else:
-        await _safe(bot, o["user_id"], header + f"\n<pre>{_esc(body)}</pre>",
+        await _safe(bot, o["user_id"], header + "\n" + listing,
                     reply_markup=k.order_kb())
 
     # Per-sale DMs are off by default: a working shop makes this noise all day,

@@ -116,16 +116,39 @@ MESSAGES: dict[str, Msg] = {
         "Delivery header", "Delivery", ("oid",)),
     # Everything above the items. Trim it to just the first line if you'd
     # rather the buyer received the keys and nothing else.
+    # {tx_line} is blank when the order was paid from balance, so the TxID row
+    # disappears by itself rather than showing an empty value.
     "delivered_body": Msg(
-        "{{m_ok}} <b>Thank you!</b>\n\n"
-        "<b>{product}</b> ×{qty}\n",
+        "{{m_ok}} <b>Order Successful!</b>\n\n"
+        "🧾 Order: <b>#{oid}</b>\n"
+        "📅 Date: <b>{date}</b>\n"
+        "Product: <b>{product}</b>\n"
+        "Quantity: <b>{qty}</b>\n"
+        "Total: <b>{amount}</b>"
+        "{tx_line}\n\n"
+        "{emoji} <b>{product} × {qty}</b>\n",
         "Delivery message", "Delivery",
-        ("oid", "product", "qty", "amount", "method")),
+        ("oid", "product", "qty", "amount", "method", "date", "txid",
+         "tx_line", "tx_link", "network", "emoji")),
+    # Sent the moment the money is confirmed, before the items are looked up.
+    # Delivery is usually instant, but the buyer shouldn't be watching an empty
+    # chat while stock is allocated.
+    "order_placed": Msg(
+        "{{m_ok}} <b>Payment Verified &amp; Order Placed!</b>\n\n"
+        "💵 Paid: <b>{amount}</b>\n"
+        "🛒 Product Cost: <b>{cost}</b>\n"
+        "💳 Remaining Balance: <b>{balance}</b>\n\n"
+        "⏳ Delivering your items…",
+        "Payment verified (before delivery)", "Delivery",
+        ("amount", "cost", "balance", "product", "qty", "oid")),
     "topup_confirmed": Msg(
-        "{{tu_title}} <b>Top-up confirmed</b>\n\n"
-        "{{tu_added}} Added: <b>{amount}</b>\n"
-        "{{tu_balance}} New balance: <b>{balance}</b>",
-        "Top-up confirmed message", "Delivery", ("amount", "balance")),
+        "{{tu_title}} <b>Deposit Verified!</b>\n\n"
+        "{{tu_added}} Credited: <b>{amount}</b>\n"
+        "🌐 Network: <b>{network}</b>\n"
+        "{{tu_balance}} New Balance: <b>{balance}</b>"
+        "{tx_line}",
+        "Top-up confirmed message", "Delivery",
+        ("amount", "balance", "network", "txid", "tx_line", "tx_link")),
     "refund_notice": Msg(
         "{{m_warn}} Order #{oid} could not be fulfilled because {reason}.\n"
         "{amount} has been credited to your wallet balance.",

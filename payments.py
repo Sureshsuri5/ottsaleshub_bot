@@ -1341,5 +1341,63 @@ async def probe() -> None:
                 pass
 
 
+# Where a buyer can see their own transaction. A payment they can verify
+# themselves is a payment they don't open a support ticket about.
+EXPLORERS = {
+    "crypto":   "https://tronscan.org/#/transaction/{tx}",
+    "bep20":    "https://bscscan.com/tx/{tx}",
+    "erc20":    "https://etherscan.io/tx/{tx}",
+    "polygon":  "https://polygonscan.com/tx/{tx}",
+    "arbitrum": "https://arbiscan.io/tx/{tx}",
+    "base":     "https://basescan.org/tx/{tx}",
+    "ton":      "https://tonviewer.com/transaction/{tx}",
+    "ltc":      "https://blockchair.com/litecoin/transaction/{tx}",
+}
+
+# Chain shown to the buyer, as they'd recognise it from their wallet.
+NETWORKS = {
+    "crypto":   "Tron (TRC-20)",
+    "bep20":    "BNB Smart Chain",
+    "erc20":    "Ethereum",
+    "polygon":  "Polygon",
+    "arbitrum": "Arbitrum",
+    "base":     "Base",
+    "ton":      "TON",
+    "ltc":      "Litecoin",
+    "balance":  "Wallet balance",
+    "stars":    "Telegram Stars",
+    "upi":      "UPI",
+    "razorpay": "Razorpay",
+    "binance":  "Binance Pay",
+    "bybit":    "Bybit Pay",
+    "bkash":    "bKash",
+    "paypal":   "PayPal",
+}
+
+
+def explorer_url(code: str, txid: str) -> str:
+    """Public link to a transaction, or '' when the rail has no explorer.
+
+    Only hash-shaped references get a link: manual rails store whatever the
+    buyer typed in the same field, and linking that produces a dead URL.
+    """
+    tx = (txid or "").strip()
+    tpl = EXPLORERS.get(code, "")
+    if not tpl or not tx or len(tx) < 16 or " " in tx:
+        return ""
+    return tpl.format(tx=tx)
+
+
+def network_label(code: str) -> str:
+    """Human name of the chain or rail a payment arrived on."""
+    if code in NETWORKS:
+        return NETWORKS[code]
+    chain = EVM_CHAINS.get(code)
+    if chain:
+        return chain["network"]
+    p = get(code)
+    return getattr(p, "title", code) if p else code
+
+
 def get(code: str):
     return REGISTRY.get(code)
