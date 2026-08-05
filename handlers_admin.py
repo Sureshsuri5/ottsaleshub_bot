@@ -158,7 +158,7 @@ async def _flair_home():
     done = sum(1 for s in flair.SLOTS_META if flair.ICONS.get(s))
     return (
         "🎨 <b>Button icons</b>\n\n"
-        f"Status: {'✅ enabled' if flair.ICONS_OK else '⚠️ disabled after a refusal'}\n"
+        f"Status: {flair.custom_state()}\n"
         f"Set: <b>{done}</b> of {total} buttons\n\n"
         "Pick a section, then a button, then <b>send the premium emoji itself</b> — "
         "I'll read its id from the message.",
@@ -492,7 +492,7 @@ async def status_cmd(m: Message, state: FSMContext):
     s = await db.stats()
     lines += ["",
               f"🔌 Update mode: <b>{'webhook' if cfg.use_webhook else 'polling'}</b>",
-              f"🎨 Premium emoji: {'✅ working' if flair.ICONS_OK else '⚠️ refused'}",
+              f"🎨 Premium emoji: {flair.custom_state()}",
               f"🗄 Database: <b>{esc(db.backend())}</b>",]
 
     # Per-order deposit addresses: show the path and the next index so the

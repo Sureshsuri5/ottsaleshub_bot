@@ -29,7 +29,14 @@ from config import cfg
 log = logging.getLogger(__name__)
 
 BOT_USERNAME = ""
-_custom_ok = True          # flipped off for good the first time Telegram objects
+# Premium emoji are switched off when Telegram refuses them, and switched back
+# on after a cooldown. It used to be permanent for the run: one refusal — a
+# single chat, a single malformed id — left the whole shop in plain emoji until
+# the next deploy, with nothing on screen to say why. Retrying costs one failed
+# send per half hour and recovers by itself.
+_custom_off_until = 0.0
+_custom_reason = ""
+CUSTOM_RETRY_AFTER = 1800
 
 # Bot API 9.4 button styling. `style` needs nothing special; `icon_custom_emoji_id`
 # needs the bot owner to have Telegram Premium (or the bot to own a Fragment
@@ -37,12 +44,24 @@ _custom_ok = True          # flipped off for good the first time Telegram object
 ICONS: dict[str, str] = {}
 
 
-ICONS_OK = True     # flipped off if Telegram ever refuses a button icon
+def custom_ok() -> bool:
+    """Whether premium emoji are usable right now."""
+    import time
+    return time.monotonic() >= _custom_off_until
+
+
+def custom_state() -> str:
+    """One line for /status: working, or why not and for how long."""
+    import time
+    if custom_ok():
+        return "✅ working"
+    mins = int((_custom_off_until - time.monotonic()) / 60) + 1
+    return f"⚠️ refused ({_custom_reason or 'no reason given'}) — retrying in {mins} min"
 
 
 def icon(slot: str | None) -> str | None:
     """Custom emoji id for a button icon, or None. Sync — read from cache."""
-    if not ICONS_OK or not slot:
+    if not custom_ok() or not slot:
         return None
     return ICONS.get(slot)
 
@@ -50,17 +69,21 @@ def icon(slot: str | None) -> str | None:
 def icon_id(raw: str | None) -> str | None:
     """Gate a per-product icon id through the same kill switch."""
     raw = (raw or "").strip()
-    return raw if (ICONS_OK and raw.isdigit()) else None
+    return raw if (custom_ok() and raw.isdigit()) else None
 
 
 def disable_icons(reason: str = "") -> None:
     """One refusal turns off both button icons and in-text premium emoji —
-    they need the same permission, so if one is rejected the other will be."""
-    global ICONS_OK, _custom_ok
-    if ICONS_OK or _custom_ok:
-        ICONS_OK = False
-        _custom_ok = False
-        log.warning("premium emoji disabled for this run: %s", reason)
+    they need the same permission, so if one is rejected the other will be.
+
+    Temporary: cleared automatically after CUSTOM_RETRY_AFTER seconds.
+    """
+    global _custom_off_until, _custom_reason
+    import time
+    _custom_off_until = time.monotonic() + CUSTOM_RETRY_AFTER
+    _custom_reason = (reason or "")[:120]
+    log.warning("premium emoji disabled for %s min: %s",
+                CUSTOM_RETRY_AFTER // 60, reason)
 
 
 CUSTOM_TAG = re.compile(r'<tg-emoji[^>]*>(.*?)</tg-emoji>', re.S)
@@ -305,7 +328,7 @@ async def slot_ids() -> dict[str, str]:
 
 async def render(text: str, decorated: bool = True) -> str:
     """Expand {{slot}} placeholders, and drop premium emoji if they're refused."""
-    live = decorated and _custom_ok
+    live = decorated and custom_ok()
     ids = await slot_ids() if live else {}
 
     def sub(m: re.Match) -> str:
@@ -325,16 +348,16 @@ async def render(text: str, decorated: bool = True) -> str:
 
 async def send(bot: Bot, chat_id: int | str, text: str, **kw):
     """Send with premium emoji, degrading to plain emoji if they're rejected."""
-    global _custom_ok
-    if _custom_ok:
+    if custom_ok():
         try:
             return await bot.send_message(chat_id, await render(text, True), **kw)
         except TelegramBadRequest as e:
             if "emoji" not in str(e).lower():
                 raise
-            _custom_ok = False
-            log.warning("custom emoji refused by Telegram — using plain emoji from now on "
-                        "(needs bot-owner Premium, or a Fragment username)")
+            # The exact wording matters — "emoji is invalid" means a bad id,
+            # while a permission error means Premium or a Fragment username is
+            # missing. Losing it made this impossible to diagnose.
+            disable_icons(str(e))
     return await bot.send_message(chat_id, await render(text, False), **kw)
 
 
