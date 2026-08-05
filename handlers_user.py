@@ -610,18 +610,37 @@ async def got_ref(m: Message, state: FSMContext):
             reply_markup=k.cancel_kb())
     oid = (await state.get_data()).get("review_oid")
     await state.clear()
-    if not await db.mark_seen(f"utr:{ref}", oid):
-        return await m.answer("That reference has already been submitted.",
-                              reply_markup=k.home_kb())
     o = await db.order(oid)
+    # Same key the watcher writes, so one transaction cannot settle two orders
+    # by arriving through two different paths.
+    if not await db.mark_seen(payments.tx_key(o["provider"], ref), oid):
+        return await m.answer("That transaction has already been used.",
+                              reply_markup=k.home_kb())
     prov = payments.get(o["provider"])
     if hasattr(prov, "verify_ref"):
         found = await prov.verify_ref(ref)
-        if found:
+        # A hash proves a transfer happened, not that it covered the order. Any
+        # inbound transaction used to settle any order regardless of size, so a
+        # 0.01 payment could claim a $50 product. One cent of slack absorbs
+        # rounding between the quoted amount and what the chain reports.
+        short = found is not None and o["amount"] and found + 0.01 < o["amount"]
+        if found and not short:
             await db.set_order(oid, amount=found if not o["amount"] else o["amount"])
             await db.set_order(oid, status="pending")
             if await delivery.settle(m.bot, oid, ref=ref):
                 return
+        if short:
+            await m.answer(
+                f"That transaction is for {cfg.money(found)}, but the order "
+                f"total is {cfg.money(o['amount'])}.\n\n"
+                "It's been sent for manual review — an admin will sort it out.",
+                reply_markup=k.home_kb())
+            await db.set_order(oid, status="awaiting_review", external_ref=ref)
+            return await delivery.notify_admins(
+                m.bot, f"⚠️ <b>Underpaid</b> — order #{oid} ({o['provider']})\n"
+                       f"Sent {cfg.money(found)} against {cfg.money(o['amount'])}\n"
+                       f"User <code>{m.from_user.id}</code>\n"
+                       f"Ref: <code>{esc(ref)}</code>")
     await db.set_order(oid, status="awaiting_review", external_ref=ref)
     o = await db.order(oid)
     note = (await texts.t("ref_received_topup") if o["kind"] == "topup" and not o["amount"]
@@ -640,6 +659,34 @@ async def got_ref(m: Message, state: FSMContext):
         m.bot, f"🔎 <b>Review needed</b> — order #{oid} ({o['provider']})\n"
                f"User <code>{m.from_user.id}</code> · {amt}\n"
                f"Ref: <code>{esc(ref)}</code>{hint}")
+
+
+@router.callback_query(F.data.startswith("txref:"))
+async def ask_tx_hash(c: CallbackQuery, state: FSMContext):
+    """Buyer volunteers the hash of the transfer they just sent.
+
+    The hash is the only field that identifies a payment uniquely once buyers
+    pay the exact product price — two orders can share an amount, but never a
+    transaction. The background watcher keeps running; whichever gets there
+    first wins, and `seen_tx` makes sure only one of them settles the order.
+    """
+    oid = int(c.data.split(":")[1])
+    o = await db.order(oid)
+    if not o or o["user_id"] != c.from_user.id:
+        return await c.answer("Unknown order.", show_alert=True)
+    if o["status"] in {"paid", "delivered"}:
+        return await c.answer("Already paid ✅", show_alert=True)
+    if o["status"] != "pending":
+        return await c.answer(f"Order is {o['status']}.", show_alert=True)
+
+    await state.set_state(Buy.waiting_ref)
+    await state.update_data(review_oid=oid)
+    await c.message.answer(
+        "Paste the <b>transaction hash</b> of your transfer.\n\n"
+        "Your wallet or exchange shows it after sending — it starts with "
+        "<code>0x</code> on BSC and Polygon. One value, no spaces.",
+        reply_markup=k.cancel_kb())
+    await c.answer()
 
 
 @router.callback_query(F.data.startswith("cancel:"))

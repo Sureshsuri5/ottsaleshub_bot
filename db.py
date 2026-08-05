@@ -875,6 +875,25 @@ async def expire_stale() -> list[int]:
     return ids
 
 
+_deriv_lock = asyncio.Lock()
+
+
+async def next_deriv_index() -> int:
+    """Hand out the next HD derivation index, once and only once.
+
+    Kept in `settings` rather than derived from the orders table: pruning
+    abandoned orders would otherwise lower the maximum and start reissuing
+    addresses that buyers had already been shown.
+    """
+    async with _deriv_lock:
+        try:
+            cur = int(await setting("hd:next_index", "0") or 0)
+        except ValueError:
+            cur = 0
+        await set_setting("hd:next_index", str(cur + 1))
+        return cur
+
+
 async def amount_taken(amount: float, unit: str) -> bool:
     """Is another live order already waiting on this exact amount?"""
     row = await q1(

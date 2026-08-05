@@ -130,6 +130,11 @@ class Config:
     # Off by default: buyers prefer the round figure they typed. Turn it on if
     # you expect several people paying the same amount at the same moment.
     unique_amounts: bool = _bool("UNIQUE_AMOUNTS", False)
+    # Watch-only account xpub at m/44'/60'/0'/0. When set, every order gets its
+    # own freshly derived deposit address instead of sharing one, and payments
+    # are matched by address rather than by amount. Public key only — this
+    # cannot spend, and the seed must never be put on the server.
+    evm_xpub: str = os.getenv("EVM_XPUB", "").strip()
 
     min_deposit: float = float(os.getenv("MIN_DEPOSIT", "1"))
     min_withdrawal: float = float(os.getenv("MIN_WITHDRAWAL", "10"))

@@ -309,6 +309,13 @@ def invoice_kb(oid: int, manual: bool, awaiting_ref: bool = False,
         rows.append([btn(flair.label("paid", "I've paid"), f"chk:{oid}",
                          style="success" if not pay_url else None,
                          icon_slot="paid")])
+    else:
+        # On-chain rails: the buyer's own transaction hash is the only thing
+        # that identifies their payment when two orders share a price. The
+        # watcher still settles most orders on its own — this is the way out
+        # when it can't tell two buyers apart.
+        rows.append([btn(flair.label("paid", "I've paid — send hash"),
+                         f"txref:{oid}", icon_slot="paid")])
     return kb(
         *rows,
         # One per row. Cancel is destructive and was sitting half-width beside

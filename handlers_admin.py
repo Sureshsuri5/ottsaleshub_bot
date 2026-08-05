@@ -416,7 +416,25 @@ async def status_cmd(m: Message, state: FSMContext):
     lines += ["",
               f"🔌 Update mode: <b>{'webhook' if cfg.use_webhook else 'polling'}</b>",
               f"🎨 Premium emoji: {'✅ working' if flair.ICONS_OK else '⚠️ refused'}",
-              f"🗄 Database: <b>{esc(db.backend())}</b>",
+              f"🗄 Database: <b>{esc(db.backend())}</b>",]
+
+    # Per-order deposit addresses: show the path and the next index so the
+    # addresses the bot will hand out can be checked against your own wallet
+    # before a buyer ever sees one.
+    import hdwallet
+    if hdwallet.ready():
+        nxt = await db.setting("hd:next_index", "0")
+        lines.append(f"🔑 Deposit addresses: <b>one per order</b> · "
+                     f"{esc(hdwallet.PATH.format(i=nxt))} next")
+        for i, a in enumerate(hdwallet.preview(2)):
+            lines.append(f"    <code>{esc(a)}</code>  (index {i})")
+    elif cfg.evm_xpub:
+        lines.append(f"🔑 Deposit addresses: ⚠️ {esc(hdwallet.problem())}")
+    else:
+        lines.append("🔑 Deposit addresses: shared address "
+                     "(set EVM_XPUB for one per order)")
+
+    lines += [
               f"📦 {s['products']} product(s) · {s['in_stock']} unit(s) in stock",
               f"👥 {s['users']} user(s) · 🕒 {cfg.timezone}"]
 

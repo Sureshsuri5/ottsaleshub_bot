@@ -21,6 +21,7 @@ import aiohttp
 import qrcode
 
 import db
+import hdwallet
 from config import cfg
 
 log = logging.getLogger(__name__)
@@ -272,17 +273,15 @@ class CryptoProvider:
             value = int(tx.get("value", 0)) / (10 ** decimals)
             ts = datetime.fromtimestamp(tx.get("block_timestamp", 0) / 1000, tz=timezone.utc)
 
-            for o in orders:
-                if abs(value - float(o["pay_amount"])) > 0.0000005:
-                    continue
+            o = match_order(orders, value)
+            if o:
                 created = datetime.strptime(o["created_at"], "%Y-%m-%d %H:%M:%S").replace(
                     tzinfo=timezone.utc)
                 # the transfer must not predate the order (180s slack for clock skew)
                 if (created - ts).total_seconds() > 180:
                     continue
-                if await db.mark_seen(txid, o["id"]):
+                if await db.mark_seen(tx_key(self.code, txid), o["id"]):
                     confirmed.append((o["id"], txid))
-                break
         return confirmed
 
 
@@ -400,7 +399,21 @@ class EvmTokenProvider:
         return round(base + random.randint(900, 9999) / 10_000, 4)
 
     async def create(self, order) -> Invoice:
-        addr, net = cfg.evm_address, self.network
+        # One address, one order, once. Reuse whatever this order was already
+        # given so reopening the screen never burns a second index — and never
+        # shows the buyer an address different from the one they already sent
+        # to.
+        addr = (order["pay_address"] or "").strip()
+        if not addr and hdwallet.ready():
+            try:
+                addr = hdwallet.address(await db.next_deriv_index())
+            except Exception as e:
+                # Falling back to the shared address here would take a payment
+                # that nothing can attribute. Better to fail the checkout.
+                log.error("could not derive a deposit address: %s", e)
+                raise
+        addr = addr or cfg.evm_address
+        net = self.network
         tokens = "USDT / USDC" if len(self.contracts) > 1 else self.unit
         confirms = "3 confirmations (~9 sec)" if self.chain_id == 56 else "1 confirmation"
         variable = order["kind"] == "topup" and not order["amount"]
@@ -580,9 +593,64 @@ class EvmTokenProvider:
         return out
 
     async def verify_ref(self, ref: str) -> float | None:
-        ref = ref.strip().lower().removeprefix("0x")
+        """Confirm one transaction hash a buyer gave us.
+
+        Asks the chain for that exact transaction rather than scanning recent
+        transfers and hoping it's still in the window — a buyer who pastes a
+        hash twenty minutes late is the normal case, not an edge one.
+
+        What has to be true before this returns a value:
+          * the transaction is mined and did not revert
+          * it moved one of *this chain's* accepted tokens
+          * the recipient is our address, not merely a party to the transfer
+          * it is buried under enough confirmations to be safe from a reorg
+
+        Several transfers to us in one transaction are summed, which is what a
+        batching contract or an exchange withdrawal can produce.
+        """
+        ref = ref.strip().lower()
+        if not ref.startswith("0x"):
+            ref = "0x" + ref
+        if len(ref) != 66 or any(ch not in "0123456789abcdefx" for ch in ref):
+            return None
+        if not cfg.evm_address:
+            return None
+
+        rcpt = await self._rpc("eth_getTransactionReceipt", [ref])
+        if rcpt:
+            # status 0x0 is a mined but reverted transaction — no money moved,
+            # yet the hash exists and looks legitimate to anyone reading it
+            if str(rcpt.get("status", "0x1")).lower() in ("0x0", "0x00"):
+                return None
+            head = await self._rpc("eth_blockNumber", [])
+            if head and rcpt.get("blockNumber"):
+                depth = int(head, 16) - int(rcpt["blockNumber"], 16)
+                if depth < (3 if self.chain_id == 56 else 1):
+                    return None            # too shallow — let it settle first
+            ours = "0x" + cfg.evm_address.lower().removeprefix("0x").rjust(64, "0")
+            accepted = {c.lower() for c in self.contracts}
+            total = 0.0
+            for lg in rcpt.get("logs", []):
+                if (lg.get("address") or "").lower() not in accepted:
+                    continue
+                topics = [t.lower() for t in lg.get("topics", [])]
+                if len(topics) < 3 or topics[0] != TRANSFER_TOPIC.lower():
+                    continue
+                if topics[2] != ours:
+                    continue               # sent to someone else, not to us
+                try:
+                    total += int(lg.get("data", "0x0"), 16) / (10 ** self.decimals)
+                except (TypeError, ValueError):
+                    continue
+            if total:
+                return round(total * cfg.usdt_rate, 2)
+            return None
+
+        # No receipt: every node refused, or the hash isn't on this chain.
+        # Fall back to the recent-transfer scan rather than rejecting outright.
+        bare = ref.removeprefix("0x")
         for tx in await self._inbound():
-            if tx["id"].lower().removeprefix("0x") == ref:
+            if tx["id"].lower().removeprefix("0x") == bare:
                 return round(tx["value"] * cfg.usdt_rate, 2)
         return None
 
@@ -611,17 +679,84 @@ class EvmTokenProvider:
                     f"{self.network} — check the address and network match")
         return f"not among the last {len(seen)} transfers seen via {source}"
 
+    async def _logs_to(self, addresses: list[str]) -> list[dict]:
+        """Inbound transfers to any of these addresses, in one request.
+
+        JSON-RPC accepts a list in a topic position, so every pending order's
+        address is covered by a single `eth_getLogs` no matter how many are
+        open — this does not get slower as the shop gets busier.
+        """
+        if not addresses or not self.rpcs:
+            return []
+        head = await self._rpc("eth_blockNumber", [])
+        if not head:
+            return []
+        latest = int(head, 16)
+        start = max(self._scanned_to + 1, latest - RPC_LOOKBACK_BLOCKS)
+        if start > latest:
+            return []
+        want = ["0x" + a.lower().removeprefix("0x").rjust(64, "0") for a in addresses]
+
+        out, hit_end = [], start
+        frm = start
+        while frm <= latest:
+            to = min(frm + self.window - 1, latest)
+            logs = await self._rpc("eth_getLogs", [{
+                "fromBlock": hex(frm), "toBlock": hex(to),
+                "address": list(self.contracts),      # both tokens in one call
+                "topics": [TRANSFER_TOPIC, None, want],
+            }])
+            if logs is None:
+                return out
+            for lg in logs:
+                topics = [t.lower() for t in lg.get("topics", [])]
+                if len(topics) < 3:
+                    continue
+                try:
+                    value = int(lg.get("data", "0x0"), 16) / (10 ** self.decimals)
+                except (TypeError, ValueError):
+                    continue
+                out.append({"id": lg.get("transactionHash", ""), "value": value,
+                            "to": "0x" + topics[2][-40:]})
+            hit_end = max(hit_end, to)
+            frm = to + 1
+        self._scanned_to = hit_end
+        return out
+
+    async def _poll_by_address(self, orders) -> list[tuple[int, str]]:
+        """Per-order addresses: the address *is* the identity of the payment.
+
+        No amount matching, so two buyers paying the same price is a non-event,
+        and there is nothing to guess between.
+        """
+        by_addr = {o["pay_address"].lower(): o for o in orders if o["pay_address"]}
+        confirmed: list[tuple[int, str]] = []
+        for tx in await self._logs_to(list(by_addr)):
+            o = by_addr.get(tx["to"].lower())
+            if not o:
+                continue
+            want = float(o["pay_amount"] or 0)
+            # An open-amount deposit takes whatever arrives. A purchase must be
+            # covered — a short payment is held rather than delivered, and the
+            # buyer keeps the address, so topping it up completes the order.
+            if want and tx["value"] + 1e-6 < want:
+                log.warning("order %s underpaid: %s of %s at %s",
+                            o["id"], tx["value"], want, tx["to"])
+                continue
+            if await db.mark_seen(tx_key(self.code, tx["id"]), o["id"]):
+                confirmed.append((o["id"], tx["id"]))
+        return confirmed
+
     async def poll(self, orders) -> list[tuple[int, str]]:
         if not orders:
             return []
+        if hdwallet.ready() and any(o["pay_address"] for o in orders):
+            return await self._poll_by_address(orders)
         confirmed: list[tuple[int, str]] = []
         for tx in await self._inbound():          # already filtered to inbound
             txid, value = tx["id"], tx["value"]
-            for o in orders:
-                if not o["pay_amount"]:
-                    continue
-                if abs(value - float(o["pay_amount"])) > 0.0000005:
-                    continue
+            o = match_order(orders, value)
+            if o:
                 # ts is 0 for logs read from a node — those come from a bounded
                 # recent block window, so they can't be stale and the age check
                 # would reject every one of them
@@ -631,9 +766,8 @@ class EvmTokenProvider:
                         o["created_at"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
                     if (created - ts).total_seconds() > 180:   # tx predates the order
                         continue
-                if await db.mark_seen(f"{self.code}:{txid}", o["id"]):
+                if await db.mark_seen(tx_key(self.code, txid), o["id"]):
                     confirmed.append((o["id"], txid))
-                break
         return confirmed
 
 
@@ -750,15 +884,13 @@ class TonJettonProvider:
             return []
         confirmed = []
         for tx in await self._inbound():
-            for o in orders:
-                if not o["pay_amount"] or abs(tx["value"] - float(o["pay_amount"])) > 5e-7:
-                    continue
+            o = match_order(orders, tx["value"])
+            if o:
                 created = _epoch(o["created_at"])
                 if tx["ts"] and tx["ts"] < created - 180:
                     continue
-                if await db.mark_seen(f"ton:{tx['id']}", o["id"]):
+                if await db.mark_seen(tx_key(self.code, tx["id"]), o["id"]):
                     confirmed.append((o["id"], tx["id"]))
-                break
         return confirmed
 
 
@@ -861,14 +993,12 @@ class LitecoinProvider:
             return []
         confirmed = []
         for tx in await self._inbound():
-            for o in orders:
-                if not o["pay_amount"] or abs(tx["value"] - float(o["pay_amount"])) > 5e-9:
-                    continue
+            o = match_order(orders, tx["value"], tol=5e-9)
+            if o:
                 if tx["ts"] and tx["ts"] < _epoch(o["created_at"]) - 900:
                     continue
-                if await db.mark_seen(f"ltc:{tx['id']}", o["id"]):
+                if await db.mark_seen(tx_key(self.code, tx["id"]), o["id"]):
                     confirmed.append((o["id"], tx["id"]))
-                break
         return confirmed
 
 
@@ -1268,7 +1398,9 @@ def _ready(code: str) -> bool:
         "ltc": cfg.ltc_address and cfg.ltc_rate,
         "upi": cfg.upi_vpa,
         "razorpay": cfg.razorpay_key and cfg.razorpay_secret and cfg.upi_rate > 0,
-        **{c: cfg.evm_address and cfg.etherscan_key for c in EVM_CHAINS},
+        # per-order addresses need neither a shared address nor an explorer key
+        **{c: bool(cfg.evm_xpub) or bool(cfg.evm_address and cfg.etherscan_key)
+           for c in EVM_CHAINS},
         **{c: RAIL_ACCOUNTS.get(c) for c in MANUAL_RAILS},
     }
     return bool(needs.get(code, True))
@@ -1397,6 +1529,38 @@ def network_label(code: str) -> str:
         return chain["network"]
     p = get(code)
     return getattr(p, "title", code) if p else code
+
+
+def tx_key(code: str, ref: str) -> str:
+    """Canonical `seen_tx` key for one on-chain transaction.
+
+    The same hash must produce the same key whichever path found it. The
+    watcher used to write `bep20:0xABC` while a buyer's own submission wrote
+    `utr:0xabc` — two different primary keys for one payment, so a single
+    transfer could settle two separate orders.
+    """
+    return f"{code}:{(ref or '').strip().lower().removeprefix('0x')}"
+
+
+def match_order(orders, value: float, tol: float = 5e-7):
+    """The one pending order this payment belongs to, or None.
+
+    When several orders are waiting on the same figure — which is normal once
+    exact product prices are used instead of unique amounts — there is nothing
+    on-chain that says which buyer sent it. Every rail previously took the
+    first match, i.e. guessed, and a wrong guess delivers one buyer's goods to
+    another. Returning None instead leaves the payment for the buyer's own
+    hash submission to resolve, which is unambiguous.
+    """
+    hits = [o for o in orders
+            if o["pay_amount"] and abs(value - float(o["pay_amount"])) <= tol]
+    if len(hits) == 1:
+        return hits[0]
+    if len(hits) > 1:
+        log.warning("payment of %s matches %s pending orders (%s) — not guessing; "
+                    "waiting for a transaction hash from the buyer",
+                    value, len(hits), ", ".join(str(o["id"]) for o in hits))
+    return None
 
 
 def get(code: str):
