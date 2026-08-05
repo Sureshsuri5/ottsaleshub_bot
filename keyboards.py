@@ -302,12 +302,13 @@ def invoice_kb(oid: int, manual: bool, awaiting_ref: bool = False,
                      icon_slot="paid")])
     return kb(
         *rows,
-        # One per row. Cancel is destructive and was sitting half-width beside
-        # Back, where a mistimed tap on a phone hits the wrong one — and on the
-        # payment screen the wrong one kills a paid-for order.
-        [back_btn("Back", back)],
+        # One per row, in the order a buyer needs them: confirm, abandon, leave.
+        # Cancel is destructive and was sitting half-width beside Back, where a
+        # mistimed tap on a phone hits the wrong one — and on the payment screen
+        # the wrong one kills a paid-for order.
         [btn(flair.label("cancel", "Cancel Order"), f"cancel:{oid}", style="danger",
              icon_slot="cancel")],
+        [back_btn("Back", back)],
     )
 
 
