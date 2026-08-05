@@ -404,10 +404,15 @@ async def order_summary(p, qty: int, balance: float | None = None,
     price = p["price"] if unit_price is None else unit_price
     total = round(price * qty, 2)
     wallet = ""
-    if balance is not None:
-        short = total - balance
-        wallet = (f"\n👛 Wallet: <b>{cfg.money(balance)}</b>"
-                  + (f" · {cfg.money(short)} short" if short > 1e-9 else " · covers this"))
+    if balance is not None and balance > 0.009:
+        # Balance is always spent first. Showing the arithmetic — held, applied,
+        # still to pay — stops the buyer wondering why the rail is asking for
+        # less than the price on the product page.
+        applied = min(balance, total)
+        rest = round(total - applied, 2)
+        wallet = (f"\n\n💰 Your Balance: <b>{cfg.money(balance)}</b>"
+                  f"\n✂️ Balance Deduction: <b>-{cfg.money(applied)}</b>"
+                  f"\n💵 Amount to Pay: <b>{cfg.money(rest)}</b>")
     return (title + "\n\n"
             f"{name_of(p)}\n"
             f"🔢 Qty: <b>{qty}</b>\n"
@@ -415,7 +420,7 @@ async def order_summary(p, qty: int, balance: float | None = None,
             + (f"  <s>{cfg.money(p['price'])}</s>" if price < p["price"] - 1e-9 else "")
             + "\n"
             f"💵 Total: <b>{cfg.money(total)}</b>{wallet}\n\n"
-            + prompt)
+            + (await texts.t("pay_rest") if wallet and balance < total else prompt))
 
 
 async def _to_payment(c: CallbackQuery, state: FSMContext, pid: int, qty: int) -> None:
@@ -486,6 +491,23 @@ async def create_order(c: CallbackQuery, state: FSMContext):
         name = "Wallet top-up"
         pid, qty = None, 1
 
+    # ---- part-paid from wallet --------------------------------------------
+    # Balance is spent before any external rail, so a buyer with $0.10 against
+    # a $0.60 order pays $0.50 rather than being told they haven't enough. The
+    # deduction happens here, at order creation, so the same balance can't be
+    # promised to two open orders at once; db.release_balance() hands it back
+    # if the order is cancelled or expires.
+    applied = 0.0
+    if kind == "purchase" and code != "balance":
+        user = await db.get_user(c.from_user.id)
+        bal = float(user["balance"]) if user else 0.0
+        if bal > 0.009:
+            applied = round(min(bal, amount), 2)
+            amount = round(amount - applied, 2)
+            if amount < 0.01:                 # balance covered the lot after all
+                applied, amount = 0.0, round(applied + amount, 2)
+                code = "balance"
+
     # ---- wallet balance settles immediately -------------------------------
     if code == "balance":
         user = await db.get_user(c.from_user.id)
@@ -515,11 +537,17 @@ async def create_order(c: CallbackQuery, state: FSMContext):
     oid = await db.create_order(
         user_id=c.from_user.id, kind=kind, product_id=pid, product_name=name, qty=qty,
         amount=amount, provider=code, pay_amount=pay_amount, pay_unit=pay_unit,
+        balance_used=applied,
         # Only an open-amount DEPOSIT is timerless — the buyer is switching apps
         # and there's no reserved amount to protect. A purchase always gets a
         # clock, or abandoned checkouts pile up in the open-orders list forever.
         expires_at=None if (kind == "topup" and payments.is_variable(code))
         else db.in_minutes(cfg.order_ttl))
+
+    # Take the wallet share now that the order exists to hold it. Doing it
+    # after creation means a failure above leaves the balance untouched.
+    if applied > 0.009:
+        await db.add_balance(c.from_user.id, -applied)
 
     inv = await prov.create(await db.order(oid))
     if inv.pay_address:
@@ -704,6 +732,7 @@ async def cancel_order(c: CallbackQuery):
     o = await db.order(oid)
     if o and o["user_id"] == c.from_user.id and o["status"] == "pending":
         await db.set_order(oid, status="cancelled")
+        await db.release_balance(oid)
         try:
             await c.message.delete()
         except Exception:

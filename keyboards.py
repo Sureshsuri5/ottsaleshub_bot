@@ -256,6 +256,11 @@ def providers_kb(pid: int, qty: int, kind: str = "purchase",
             # the wallet button carries the figure, so nobody taps it to be told no
             if p.code == "balance" and balance is not None:
                 enough = total is None or balance + 1e-9 >= total
+                # Part balance is applied automatically at checkout, so a
+                # "not enough" button would be both wrong and a dead end —
+                # the other rails now charge only the remainder.
+                if not enough and balance > 0.009:
+                    continue
                 # through flair.label so the title's own 👛 is dropped when an
                 # icon is set — otherwise the button carries two marks
                 label = (f"{flair.label('pay_balance', p.title)} "

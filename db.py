@@ -332,6 +332,9 @@ async def _migrate() -> None:
         # the shortfall the buyer was last told about, so a partial payment is
         # reported once rather than on every poll
         "ALTER TABLE orders ADD COLUMN short_notified REAL NOT NULL DEFAULT 0",
+        # wallet balance already taken for this order, so a cancellation can
+        # hand it back and a receipt can show the real total
+        "ALTER TABLE orders ADD COLUMN balance_used REAL NOT NULL DEFAULT 0",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_code ON orders(code)",
     ):
         try:
@@ -881,6 +884,23 @@ async def expire_stale() -> list[int]:
 
 
 _deriv_lock = asyncio.Lock()
+
+
+async def release_balance(oid: int) -> float:
+    """Give back any wallet balance an unfinished order was holding.
+
+    Zeroed in the same breath as the refund: an order that gets cancelled and
+    then expires must not pay the buyer twice.
+    """
+    o = await q1("SELECT balance_used FROM orders WHERE id = ?", (oid,))
+    used = float(o["balance_used"] or 0) if o else 0.0
+    if used < 0.01:
+        return 0.0
+    row = await q1("SELECT user_id FROM orders WHERE id = ?", (oid,))
+    await ex("UPDATE orders SET balance_used = 0 WHERE id = ?", (oid,))
+    if row:
+        await add_balance(row["user_id"], used)
+    return used
 
 
 async def next_deriv_index() -> int:

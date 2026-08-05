@@ -93,6 +93,9 @@ MESSAGES: dict[str, Msg] = {
         "Quantity question", "Checkout", ("unit",)),
     "summary_title": Msg("{{m_receipt}} <b>Order Summary</b>", "Order summary title", "Checkout"),
     "pay_choose": Msg("{{m_card}} Choose a payment method:", "Payment prompt", "Checkout"),
+    "pay_rest": Msg(
+        "{{m_warn}} Pay the remaining amount via:",
+        "Prompt when wallet covers part of an order", "Checkout", ()),
     "order_cancelled": Msg(
         "{{m_error}} <b>Order Cancelled</b>\n\n"
         "Your order has been cancelled. No payment is required.",

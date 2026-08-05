@@ -46,6 +46,8 @@ async def _tick(bot: Bot) -> None:
         log.exception("could not send part-payment notices")
 
     for oid in await db.expire_stale():
+        # an expired order was holding wallet balance it never spent
+        await db.release_balance(oid)
         o = await db.order(oid)
         try:
             import texts

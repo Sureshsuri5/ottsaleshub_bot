@@ -140,10 +140,11 @@ async def deliver(bot: Bot, oid: int) -> bool:
     await db.set_order(oid, status="delivered", delivered_text=body)
     await db.ex("UPDATE products SET sold_count = sold_count + ? WHERE id = ?", (o["qty"], p["id"]))
 
+    full = round(float(o["amount"] or 0) + float(o["balance_used"] or 0), 2)
     header = await texts.t("delivered_body", oid=o["code"] or oid,
                            product=_esc(p["name"]), qty=o["qty"],
                            emoji=p["emoji"] or "",
-                           amount=cfg.money(o["amount"]), method=_esc(o["provider"]),
+                           amount=cfg.money(full), method=_esc(o["provider"]),
                            date=timefmt.local_dt(o["paid_at"] or o["created_at"]),
                            **await _tx_fields(o, short=False))
 
@@ -219,11 +220,15 @@ async def _pay_referrer(bot: Bot, o, deposit: bool = False) -> None:
 
 
 async def _refund(bot: Bot, o, reason: str) -> None:
+    # Both halves come back: what the buyer paid on the rail, and the wallet
+    # balance the order was holding. Refunding only the rail share would
+    # quietly keep the part they'd already had deducted.
+    back = round(float(o["amount"] or 0) + await db.release_balance(o["id"]), 2)
     await db.add_balance(o["user_id"], o["amount"])
     await db.set_order(o["id"], status="cancelled")
     await _safe(bot, o["user_id"],
                 await texts.t("refund_notice", oid=o["id"], reason=reason,
-                              amount=cfg.money(o["amount"])),
+                              amount=cfg.money(back)),
                 reply_markup=k.home_kb())
     await notify_admins(bot, f"🚨 Auto-refund on order #{o['id']} — {reason}")
 
