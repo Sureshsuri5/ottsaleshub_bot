@@ -149,6 +149,13 @@ MESSAGES: dict[str, Msg] = {
         "{tx_line}",
         "Top-up confirmed message", "Delivery",
         ("amount", "balance", "network", "txid", "tx_line", "tx_link")),
+    "overpay_credited": Msg(
+        "{{tu_added}} You sent <b>{sent}</b>, which is <b>{extra}</b> more than "
+        "the order total.\n"
+        "The difference has been added to your wallet — new balance "
+        "<b>{balance}</b>.",
+        "Overpayment credited to wallet", "Delivery",
+        ("sent", "extra", "balance", "oid")),
     "refund_notice": Msg(
         "{{m_warn}} Order #{oid} could not be fulfilled because {reason}.\n"
         "{amount} has been credited to your wallet balance.",

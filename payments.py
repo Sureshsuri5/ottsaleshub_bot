@@ -744,6 +744,10 @@ class EvmTokenProvider:
                             o["id"], tx["value"], want, tx["to"])
                 continue
             if await db.mark_seen(tx_key(self.code, tx["id"]), o["id"]):
+                # record what landed, not what was quoted — delivery credits
+                # any surplus to the buyer's wallet
+                await db.set_order(o["id"],
+                                   received=round(tx["value"] * cfg.usdt_rate, 2))
                 confirmed.append((o["id"], tx["id"]))
         return confirmed
 

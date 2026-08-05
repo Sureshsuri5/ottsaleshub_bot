@@ -327,6 +327,8 @@ async def _migrate() -> None:
         "ALTER TABLE users ADD COLUMN tier_id INTEGER REFERENCES tiers(id)",
         "ALTER TABLE users ADD COLUMN activated INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE products ADD COLUMN keywords TEXT NOT NULL DEFAULT ''",
+        # what actually arrived, when that differs from what was asked for
+        "ALTER TABLE orders ADD COLUMN received REAL NOT NULL DEFAULT 0",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_code ON orders(code)",
     ):
         try:

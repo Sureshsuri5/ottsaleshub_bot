@@ -626,7 +626,8 @@ async def got_ref(m: Message, state: FSMContext):
         short = found is not None and o["amount"] and found + 0.01 < o["amount"]
         if found and not short:
             await db.set_order(oid, amount=found if not o["amount"] else o["amount"])
-            await db.set_order(oid, status="pending")
+            # what the chain says arrived, so any surplus reaches the wallet
+            await db.set_order(oid, status="pending", received=found)
             if await delivery.settle(m.bot, oid, ref=ref):
                 return
         if short:

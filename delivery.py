@@ -162,6 +162,7 @@ async def deliver(bot: Bot, oid: int) -> bool:
     # public feed — anonymised, never carries the buyer or the delivered items
     await flair.announce_sale(bot, o, p)
     await _pay_referrer(bot, o)
+    await _credit_overpayment(bot, o)
 
     if not p["infinite"]:
         left = await db.stock_count(p["id"])
@@ -225,6 +226,30 @@ async def notify_admins(bot: Bot, text: str, skip: int | None = None) -> None:
 
 def _esc(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+async def _credit_overpayment(bot: Bot, o) -> None:
+    """Anything sent above the order total becomes wallet balance.
+
+    A buyer who rounds up, or pays from an exchange that sends a little extra,
+    should not simply lose the difference. Rounded to the shop's own precision
+    so a fraction of a cent from rate conversion doesn't produce a message
+    about nothing.
+    """
+    try:
+        received = float(o["received"] or 0)
+    except (KeyError, IndexError, TypeError):
+        return                      # column not present on an older row
+    extra = round(received - float(o["amount"] or 0), 2)
+    if extra < 0.01:
+        return
+    await db.add_balance(o["user_id"], extra)
+    user = await db.get_user(o["user_id"])
+    await _safe(bot, o["user_id"], await texts.t(
+        "overpay_credited", sent=cfg.money(received), extra=cfg.money(extra),
+        balance=cfg.money(user["balance"] if user else extra),
+        oid=o["code"] or o["id"]))
+    log.info("order %s overpaid by %s — credited to wallet", o["id"], extra)
 
 
 async def _safe(bot: Bot, chat_id: int, text: str, **kw) -> None:
