@@ -787,8 +787,32 @@ def _page(name: str):
     return handler
 
 
+@web.middleware
+async def json_errors(request, handler):
+    """Turn an unhandled exception into JSON the Mini App can read.
+
+    Without this, aiohttp answers a crash with an HTML 500 page, the client
+    can't parse it, and every fault in every screen renders as the same
+    "Something went wrong" — which says nothing and makes a one-line SQL bug
+    take a day to find. The full traceback goes to the log either way.
+
+    Detail is only returned on admin routes. A buyer has no use for a Python
+    exception, and error text is a small information leak.
+    """
+    try:
+        return await handler(request)
+    except web.HTTPException:
+        raise
+    except Exception as e:
+        log.exception("unhandled error on %s %s", request.method, request.path)
+        detail = f"{type(e).__name__}: {e}"[:300]
+        if not request.path.startswith("/api/admin"):
+            detail = "Something went wrong. Try again."
+        return web.json_response({"error": detail}, status=500)
+
+
 def build_app(bot: Bot) -> web.Application:
-    app = web.Application(middlewares=[api_rate_limit, auth_middleware])
+    app = web.Application(middlewares=[json_errors, api_rate_limit, auth_middleware])
     app["bot"] = bot
     r = app.router
 
