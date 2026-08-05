@@ -1206,17 +1206,35 @@ class BinancePayProvider:
 
     async def create(self, order) -> Invoice:
         account = RAIL_ACCOUNTS.get(self.code, "not configured")
-        lines = [
-            "{{dep_tip}} You can send <b>any amount</b> — it will be added to your balance.",
-            "", "———————————————", "",
+        # A deposit takes any amount; a purchase has a total that has to be
+        # paid. This built the deposit wording either way, so someone buying a
+        # product was told to send "any amount" and given no figure at all.
+        variable = order["kind"] == "topup" and not order["amount"]
+
+        if variable:
+            lines = ["{{dep_tip}} You can send <b>any amount</b> — it will be "
+                     "added to your balance.", "", "———————————————"]
+        else:
+            lines = [
+                "———————————————",
+                f"{{{{dep_box}}}} Product: <b>{_esc(order['product_name'])}</b>",
+                f"{{{{dep_num}}}} Quantity: <b>{order['qty']}</b>",
+                f"{{{{dep_amount}}}} Total: <b>{cfg.money(order['amount'])}</b>",
+                "———————————————",
+            ]
+        lines += [
+            "",
             f"{{{{dep_bank}}}} <b>{self.heading}</b>", "",
             f"<b>{self.label}:</b>", f"<code>{account}</code>",
             "{{dep_point}} <i>Tap to copy</i>", "", "———————————————", "",
         ]
+        if not variable:
+            lines += [f"{{{{dep_amount}}}} Send exactly: "
+                      f"<b>{cfg.money(order['amount'])}</b>", ""]
         lines.append(
-            "After sending, paste your <b>Transaction ID</b> here and we'll verify "
+            "After sending, paste your <b>Order ID</b> here and we'll verify "
             "it <b>automatically</b>." if self.automatic else
-            "After sending, paste your <b>Transaction ID</b> or <b>Order ID</b> here "
+            "After sending, paste your <b>Order ID</b> here "
             "and we'll confirm it.")
         return Invoice(text="\n".join(lines), pay_amount=order["amount"] or 0,
                        pay_unit=cfg.fiat, pay_address=account, manual_ref=True)
@@ -1538,6 +1556,22 @@ def network_label(code: str) -> str:
         return chain["network"]
     p = get(code)
     return getattr(p, "title", code) if p else code
+
+
+REF_LABELS = {
+    "upi": "UTR", "razorpay": "payment ID", "binance": "Order ID",
+    "bybit": "Order ID", "bkash": "TrxID", "paypal": "transaction ID",
+    "ton": "transaction hash", "ltc": "transaction hash",
+}
+
+
+def ref_label(code: str) -> str:
+    """What this rail calls the reference a buyer pastes in.
+
+    A buyer looking at a Binance receipt sees 'Order ID'; asking them for a
+    'transaction ID' sends them hunting for a field that isn't there.
+    """
+    return REF_LABELS.get(code, "transaction hash")
 
 
 def tx_key(code: str, ref: str) -> str:

@@ -287,7 +287,8 @@ def rails_kb(pid: int, qty: int, kind: str, group: str) -> InlineKeyboardMarkup:
 
 
 def invoice_kb(oid: int, manual: bool, awaiting_ref: bool = False,
-               back: str = "home", pay_url: str | None = None) -> InlineKeyboardMarkup:
+               back: str = "home", pay_url: str | None = None,
+               ref_label: str = "transaction hash") -> InlineKeyboardMarkup:
     rows = []
     if pay_url:
         rows.append([url_btn(flair.label("pay_now", "Pay now"), pay_url,
@@ -296,7 +297,7 @@ def invoice_kb(oid: int, manual: bool, awaiting_ref: bool = False,
     # is easy to scroll past, and the input state is lost if the buyer wanders
     # off to the menu and comes back — without this button they are told to tap
     # something that isn't there, with no way to reopen it.
-    label = "I've paid — send UTR" if manual else "I've paid — send hash"
+    label = f"I've paid — send {ref_label}"
     rows.append([btn(flair.label("paid", label), f"txref:{oid}",
                      style="success" if not pay_url else None,
                      icon_slot="paid")])

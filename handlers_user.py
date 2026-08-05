@@ -562,12 +562,14 @@ async def create_order(c: CallbackQuery, state: FSMContext):
         photo = BufferedInputFile(payments.qr_png(inv.qr_payload), filename="pay.png")
         await c.bot.send_photo(c.from_user.id, photo,
                                caption=await flair.render(header + inv.text),
-                               reply_markup=k.invoice_kb(oid, inv.manual_ref, awaiting,
-                                                           back_to, inv.pay_url))
+                               reply_markup=k.invoice_kb(
+                                   oid, inv.manual_ref, awaiting, back_to,
+                                   inv.pay_url, payments.ref_label(code)))
     else:
         await c.bot.send_message(c.from_user.id, await flair.render(header + inv.text),
-                                 reply_markup=k.invoice_kb(oid, inv.manual_ref, awaiting,
-                                                           back_to, inv.pay_url))
+                                 reply_markup=k.invoice_kb(
+                                   oid, inv.manual_ref, awaiting, back_to,
+                                   inv.pay_url, payments.ref_label(code)))
     await c.answer()
 
 
@@ -682,16 +684,16 @@ async def ask_tx_hash(c: CallbackQuery, state: FSMContext):
 
     await state.set_state(Buy.waiting_ref)
     await state.update_data(review_oid=oid)
-    prov = payments.get(o["provider"])
-    if getattr(prov, "manual", False) or o["provider"] in {"upi", "razorpay"}:
-        ask = ("Send the <b>12-digit UTR</b> / transaction reference from your "
-               "payment app.\n\nIt's on the payment receipt, usually labelled "
-               "UTR, RRN or Transaction ID. Digits only, no spaces.")
-    else:
-        ask = ("Paste the <b>transaction hash</b> of your transfer.\n\n"
-               "Your wallet or exchange shows it after sending — it starts with "
-               "<code>0x</code> on BSC. One value, no spaces.")
-    await c.message.answer(ask, reply_markup=k.cancel_kb())
+    label = payments.ref_label(o["provider"])
+    hint = {
+        "UTR": "It's on the payment receipt in your UPI app, usually labelled "
+               "UTR, RRN or Transaction ID. Digits only, no spaces.",
+        "Order ID": "Open the transfer in Binance and copy the Order ID from "
+                    "the receipt. One value, no spaces.",
+    }.get(label, "Your wallet or exchange shows it after sending — it starts "
+                 "with <code>0x</code> on BSC. One value, no spaces.")
+    await c.message.answer(f"Send your <b>{label}</b>.\n\n{hint}",
+                           reply_markup=k.cancel_kb())
     await c.answer()
 
 
