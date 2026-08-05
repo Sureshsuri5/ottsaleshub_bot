@@ -981,10 +981,7 @@ async def my_stats(c: CallbackQuery):
 @router.callback_query(F.data == "pf:notify")
 async def notifications(c: CallbackQuery):
     u = await db.get_user(c.from_user.id)
-    await show(c, "🔔 <b>Notifications</b>\n\n"
-                  "Order updates cover deliveries, refunds and payment confirmations.\n"
-                  "Announcements are shop news and offers.",
-               k.notify_kb(u))
+    await show(c, "🔔 <b>Notifications</b>", k.notify_kb(u))
     await c.answer()
 
 
@@ -994,10 +991,7 @@ async def notify_toggle(c: CallbackQuery):
     u = await db.get_user(c.from_user.id)
     await db.set_notify(c.from_user.id, field, not u[field])
     u = await db.get_user(c.from_user.id)
-    await show(c, "🔔 <b>Notifications</b>\n\n"
-                  "Order updates cover deliveries, refunds and payment confirmations.\n"
-                  "Announcements are shop news and offers.",
-               k.notify_kb(u))
+    await show(c, "🔔 <b>Notifications</b>", k.notify_kb(u))
     await c.answer("Saved")
 
 
