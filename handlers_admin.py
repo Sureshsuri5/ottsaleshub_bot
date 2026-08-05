@@ -398,7 +398,7 @@ async def wallet_cmd(m: Message, state: FSMContext):
             break
 
     rows = await db.q(
-        "SELECT pay_address, status, amount, code FROM orders "
+        "SELECT pay_address, status, amount, received, code FROM orders "
         "WHERE pay_address != '' AND pay_address IS NOT NULL "
         "ORDER BY id DESC LIMIT 200")
 
@@ -417,13 +417,23 @@ async def wallet_cmd(m: Message, state: FSMContext):
 
     lines = ["🔑 <b>Accounts holding funds</b>", ""]
     total = 0.0
+    shared = (cfg.evm_address or "").lower()
     for addr, orders in list(funded.items())[:25]:
         idx = where.get(addr)
-        got = sum(float(o["amount"] or 0) for o in orders)
+        # what landed on the address, not what the order asked for — an
+        # overpaid order holds more than its total, and this list exists to
+        # tell you what is actually there to sweep
+        got = sum(float(o["received"] or 0) or float(o["amount"] or 0)
+                  for o in orders)
         total += got
         # MetaMask numbers accounts from 1, the derivation path from 0 — say
         # both, because the whole point is finding it in the wallet
-        seat = f"Account {idx + 1} (index {idx})" if idx is not None else "unknown index"
+        if idx is not None:
+            seat = f"Account {idx + 1} (index {idx})"
+        elif addr == shared:
+            seat = "Shared address (orders before per-order addresses)"
+        else:
+            seat = "Unknown address"
         lines.append(f"<b>{seat}</b> — {cfg.money(got)}")
         lines.append(f"<code>{esc(orders[0]['pay_address'])}</code>")
         lines.append("")

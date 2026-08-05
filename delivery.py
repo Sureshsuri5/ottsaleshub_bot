@@ -100,12 +100,20 @@ async def deliver(bot: Bot, oid: int) -> bool:
     o = await db.order(oid)
     p = await db.product(o["product_id"]) if o["product_id"] else None
 
+    # Credit any surplus first, so the confirmation below can state a balance
+    # that is true at the moment the buyer reads it. Doing this after delivery
+    # made the message say "Remaining Balance: $0.00" to someone who had just
+    # been given change.
+    extra = await _credit_overpayment(bot, o, notify=False)
+
     # Confirm the money before touching stock. Allocation is fast, but if it
     # fails the buyer has still seen that their payment landed.
     buyer = await db.get_user(o["user_id"])
+    # what they actually sent, which is not the order total when they rounded up
+    paid = max(float(o["received"] or 0), float(o["amount"] or 0))
     await _safe(bot, o["user_id"], await texts.t(
         "order_placed",
-        amount=cfg.money(o["amount"]),
+        amount=cfg.money(paid),
         cost=cfg.money(o["amount"]),
         balance=cfg.money(buyer["balance"] if buyer else 0),
         product=_esc(p["name"]) if p else "—",
@@ -160,9 +168,9 @@ async def deliver(bot: Bot, oid: int) -> bool:
                  f"{o['provider']}", skip=o["user_id"])
 
     # public feed — anonymised, never carries the buyer or the delivered items
+    await _notify_overpay(bot, o, extra)
     await flair.announce_sale(bot, o, p)
     await _pay_referrer(bot, o)
-    await _credit_overpayment(bot, o)
 
     if not p["infinite"]:
         left = await db.stock_count(p["id"])
@@ -228,7 +236,7 @@ def _esc(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-async def _credit_overpayment(bot: Bot, o) -> None:
+async def _credit_overpayment(bot: Bot, o, notify: bool = True) -> float:
     """Anything sent above the order total becomes wallet balance.
 
     A buyer who rounds up, or pays from an exchange that sends a little extra,
@@ -239,17 +247,29 @@ async def _credit_overpayment(bot: Bot, o) -> None:
     try:
         received = float(o["received"] or 0)
     except (KeyError, IndexError, TypeError):
-        return                      # column not present on an older row
+        return 0.0                  # column not present on an older row
     extra = round(received - float(o["amount"] or 0), 2)
     if extra < 0.01:
-        return
+        return 0.0
     await db.add_balance(o["user_id"], extra)
+    log.info("order %s overpaid by %s — credited to wallet", o["id"], extra)
+    if notify:
+        await _notify_overpay(bot, o, extra)
+    return extra
+
+
+async def _notify_overpay(bot: Bot, o, extra: float) -> None:
+    """Sent after the goods, so the buyer reads confirmation then change —
+    crediting has to happen earlier than this to keep the balance line honest,
+    but the message belongs at the end."""
+    if extra < 0.01:
+        return
     user = await db.get_user(o["user_id"])
     await _safe(bot, o["user_id"], await texts.t(
-        "overpay_credited", sent=cfg.money(received), extra=cfg.money(extra),
+        "overpay_credited",
+        sent=cfg.money(float(o["received"] or 0)), extra=cfg.money(extra),
         balance=cfg.money(user["balance"] if user else extra),
         oid=o["code"] or o["id"]))
-    log.info("order %s overpaid by %s — credited to wallet", o["id"], extra)
 
 
 async def _safe(bot: Bot, chat_id: int, text: str, **kw) -> None:
