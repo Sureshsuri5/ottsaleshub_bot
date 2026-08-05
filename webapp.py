@@ -510,9 +510,12 @@ async def adm_order_action(request):
         if o["status"] in {"delivered", "paid"}:
             return web.json_response({"error": "already settled"}, status=409)
         await db.set_order(oid, status="cancelled")
+        await db.release_balance(oid)
         return web.json_response({"ok": True, "status": "cancelled"})
     if action == "reject":
         await db.set_order(oid, status="rejected")
+        # same as the Telegram panel: hand back any reserved wallet balance
+        await db.release_balance(oid)
         try:
             await bot.send_message(o["user_id"], f"❌ Order #{oid} was rejected — we couldn't "
                                                  "match your payment. Contact support if this "

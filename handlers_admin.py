@@ -871,11 +871,17 @@ async def reject(c: CallbackQuery):
     oid = int(c.data.split(":")[2])
     o = await db.order(oid)
     await db.set_order(oid, status="rejected")
+    # The order may have been holding wallet balance towards its total. That
+    # was the buyer's money the whole time — rejecting the payment they
+    # submitted is no reason to keep it.
+    back = await db.release_balance(oid)
     await _show(c, c.message.html_text + "\n\n❌ Rejected", k.back())
+    note = (f"\n\n{cfg.money(back)} of wallet balance has been returned."
+            if back >= 0.01 else "")
     try:
         await c.bot.send_message(
             o["user_id"], f"❌ Order #{oid} was rejected — we couldn't match your payment. "
-                          "Contact support if you believe this is a mistake.",
+                          f"Contact support if you believe this is a mistake.{note}",
             reply_markup=k.home_kb())
     except Exception:
         pass

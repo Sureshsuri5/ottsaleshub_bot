@@ -851,6 +851,16 @@ async def prune_dead_orders(days: int) -> int:
     """
     if days <= 0:
         return 0
+    # Last chance to hand back anything still held. Every path that closes an
+    # order releases its balance already, but deleting the row destroys the
+    # only record that it was owed — so check once more before it goes.
+    stuck = await q(
+        "SELECT id FROM orders WHERE status IN ('cancelled','expired','rejected') "
+        "AND COALESCE(balance_used, 0) > 0 AND created_at < datetime('now', ?)",
+        (f"-{days} days",))
+    for row in stuck:
+        log.warning("order %s still held wallet balance at prune time", row["id"])
+        await release_balance(row["id"])
     return await ex_count(
         "DELETE FROM orders WHERE status IN ('cancelled','expired','rejected') "
         "AND created_at < datetime('now', ?)", (f"-{days} days",))
