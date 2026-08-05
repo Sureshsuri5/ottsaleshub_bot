@@ -118,6 +118,7 @@ ADMIN_COMMANDS = USER_COMMANDS + [
     ("flair", "Button icons"),
     ("ids", "Get sticker / emoji ids"),
     ("backup", "Download a full database backup"),
+    ("wallet", "Which deposit accounts hold funds"),
 ]
 
 

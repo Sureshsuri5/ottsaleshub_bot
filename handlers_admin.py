@@ -368,6 +368,73 @@ async def backup_cmd(m: Message, state: FSMContext):
         reply_markup=k.back())
 
 
+@router.message(Command("wallet"))
+async def wallet_cmd(m: Message, state: FSMContext):
+    """Which derived accounts actually hold money, and where to find them.
+
+    Addresses are matched back to their derivation index by re-deriving from
+    the xpub rather than storing the index — the address is already on the
+    order, and a stored index could drift out of step with it.
+    """
+    await state.clear()
+    import hdwallet
+    if not hdwallet.ready():
+        return await m.answer(f"🔑 Per-order addresses are off — "
+                              f"{esc(hdwallet.problem())}")
+
+    try:
+        nxt = int(await db.setting("hd:next_index", "0") or 0)
+    except ValueError:
+        nxt = 0
+    if not nxt:
+        return await m.answer("No deposit addresses issued yet.")
+
+    # address -> index, for every address ever handed out
+    where = {}
+    for i in range(min(nxt, 2000)):
+        try:
+            where[hdwallet.address(i).lower()] = i
+        except Exception:
+            break
+
+    rows = await db.q(
+        "SELECT pay_address, status, amount, code FROM orders "
+        "WHERE pay_address != '' AND pay_address IS NOT NULL "
+        "ORDER BY id DESC LIMIT 200")
+
+    funded: dict[str, list] = {}
+    pending = 0
+    for r in rows:
+        if r["status"] in {"paid", "delivered"}:
+            funded.setdefault(r["pay_address"].lower(), []).append(r)
+        elif r["status"] == "pending":
+            pending += 1
+
+    if not funded:
+        return await m.answer(
+            f"🔑 <b>Deposit wallet</b>\n\n{nxt} address(es) issued, "
+            f"{pending} awaiting payment.\nNone have received funds yet.")
+
+    lines = ["🔑 <b>Accounts holding funds</b>", ""]
+    total = 0.0
+    for addr, orders in list(funded.items())[:25]:
+        idx = where.get(addr)
+        got = sum(float(o["amount"] or 0) for o in orders)
+        total += got
+        # MetaMask numbers accounts from 1, the derivation path from 0 — say
+        # both, because the whole point is finding it in the wallet
+        seat = f"Account {idx + 1} (index {idx})" if idx is not None else "unknown index"
+        lines.append(f"<b>{seat}</b> — {cfg.money(got)}")
+        lines.append(f"<code>{esc(orders[0]['pay_address'])}</code>")
+        lines.append("")
+
+    lines.append(f"<b>Total received: {cfg.money(total)}</b>")
+    lines.append(f"<i>{pending} order(s) still awaiting payment. "
+                 f"Each account needs a little BNB for gas before you can "
+                 f"move its USDT out.</i>")
+    await m.answer("\n".join(lines), reply_markup=k.back())
+
+
 @router.message(Command("status"))
 async def status_cmd(m: Message, state: FSMContext):
     """One screen that answers 'why isn't X showing up?'"""
