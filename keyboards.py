@@ -288,34 +288,18 @@ def rails_kb(pid: int, qty: int, kind: str, group: str) -> InlineKeyboardMarkup:
 
 def invoice_kb(oid: int, manual: bool, awaiting_ref: bool = False,
                back: str = "home", pay_url: str | None = None) -> InlineKeyboardMarkup:
-    """When the bot is already listening for a pasted reference, an "I've paid"
-    button competes with the text input — but Cancel still has to be reachable,
-    or a buyer who changed their mind has no way out but support."""
-    if awaiting_ref:
-        return kb([back_btn("Back", back)],
-                  [btn(flair.label("cancel", "Cancel Order"), f"cancel:{oid}",
-                       style="danger", icon_slot="cancel")])
     rows = []
     if pay_url:
         rows.append([url_btn(flair.label("pay_now", "Pay now"), pay_url,
                              style="success", icon_slot="pay_now")])
-    # "I've paid" is the submit action on a manual rail — the buyer confirms and
-    # an admin reviews, so it has to be here. On an auto-verifying rail there is
-    # nothing to submit: the watcher polls every few seconds anyway, and the
-    # chain needs its confirmations regardless of who taps what. A "Check
-    # payment" button there mostly gets tapped too early and answers "not seen
-    # yet" to someone who just sent real money, which reads as a problem.
-    if manual:
-        rows.append([btn(flair.label("paid", "I've paid"), f"chk:{oid}",
-                         style="success" if not pay_url else None,
-                         icon_slot="paid")])
-    else:
-        # On-chain rails: the buyer's own transaction hash is the only thing
-        # that identifies their payment when two orders share a price. The
-        # watcher still settles most orders on its own — this is the way out
-        # when it can't tell two buyers apart.
-        rows.append([btn(flair.label("paid", "I've paid — send hash"),
-                         f"txref:{oid}", icon_slot="paid")])
+    # Shown even while the bot is already listening for a reference. The prompt
+    # is easy to scroll past, and the input state is lost if the buyer wanders
+    # off to the menu and comes back — without this button they are told to tap
+    # something that isn't there, with no way to reopen it.
+    label = "I've paid — send UTR" if manual else "I've paid — send hash"
+    rows.append([btn(flair.label("paid", label), f"txref:{oid}",
+                     style="success" if not pay_url else None,
+                     icon_slot="paid")])
     return kb(
         *rows,
         # One per row. Cancel is destructive and was sitting half-width beside

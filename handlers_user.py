@@ -682,11 +682,16 @@ async def ask_tx_hash(c: CallbackQuery, state: FSMContext):
 
     await state.set_state(Buy.waiting_ref)
     await state.update_data(review_oid=oid)
-    await c.message.answer(
-        "Paste the <b>transaction hash</b> of your transfer.\n\n"
-        "Your wallet or exchange shows it after sending — it starts with "
-        "<code>0x</code> on BSC and Polygon. One value, no spaces.",
-        reply_markup=k.cancel_kb())
+    prov = payments.get(o["provider"])
+    if getattr(prov, "manual", False) or o["provider"] in {"upi", "razorpay"}:
+        ask = ("Send the <b>12-digit UTR</b> / transaction reference from your "
+               "payment app.\n\nIt's on the payment receipt, usually labelled "
+               "UTR, RRN or Transaction ID. Digits only, no spaces.")
+    else:
+        ask = ("Paste the <b>transaction hash</b> of your transfer.\n\n"
+               "Your wallet or exchange shows it after sending — it starts with "
+               "<code>0x</code> on BSC. One value, no spaces.")
+    await c.message.answer(ask, reply_markup=k.cancel_kb())
     await c.answer()
 
 
