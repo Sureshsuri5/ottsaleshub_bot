@@ -543,12 +543,19 @@ async def create_order(c: CallbackQuery, state: FSMContext):
         return await c.answer()
 
     # a manual rail waits on a pasted reference, so open that input immediately
-    awaiting = payments.is_variable(code)
+    #
+    # This used to ask `is_variable(code)`, which is true for every crypto rail
+    # because they can all take an open-ended deposit. That is a property of the
+    # rail, not of this order — so a normal BEP20 purchase was treated as though
+    # the bot were waiting for a typed reference and got the stripped-down
+    # keyboard: Back only, no Cancel, no Check payment. What actually matters is
+    # whether *this* invoice wants a reference, which is what manual_ref means.
+    awaiting = bool(inv.manual_ref)
     if inv.manual_ref:
         await state.set_state(Buy.waiting_ref)
         await state.update_data(review_oid=oid)
 
-    header = (f"<b>{prov.title}</b>\n\n" if awaiting
+    header = (f"<b>{prov.title}</b>\n\n" if awaiting or kind == "topup"
               else f"🧾 <b>Order #{oid}</b> — {esc(name)} ×{qty}\n\n")
     back_to = "menu:balance" if kind == "topup" else "shop"
     if inv.qr_payload:

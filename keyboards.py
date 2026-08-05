@@ -288,10 +288,13 @@ def rails_kb(pid: int, qty: int, kind: str, group: str) -> InlineKeyboardMarkup:
 
 def invoice_kb(oid: int, manual: bool, awaiting_ref: bool = False,
                back: str = "home", pay_url: str | None = None) -> InlineKeyboardMarkup:
-    """When the bot is already listening for a pasted reference, the only thing
-    worth offering is a way out — another button competes with the text input."""
+    """When the bot is already listening for a pasted reference, an "I've paid"
+    button competes with the text input — but Cancel still has to be reachable,
+    or a buyer who changed their mind has no way out but support."""
     if awaiting_ref:
-        return kb([back_btn("Back", back)])
+        return kb([back_btn("Back", back)],
+                  [btn(flair.label("cancel", "Cancel Order"), f"cancel:{oid}",
+                       style="danger", icon_slot="cancel")])
     rows = []
     if pay_url:
         rows.append([url_btn(flair.label("pay_now", "Pay now"), pay_url,
