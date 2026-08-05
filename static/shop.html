@@ -357,6 +357,25 @@ function productView(pid) {
   });
 }
 
+/* Rails are split by the currency the buyer is reading prices in. UPI collects
+   rupees; the crypto rails quote and settle in dollars. Showing both at once
+   means someone viewing ₹ can pick a rail that will ask them for $, which is
+   where wrong-amount payments come from.
+
+   Wallet balance is always offered — it is the shop's own currency either way.
+   The split only applies when a second currency actually exists, so a
+   single-currency shop keeps every rail it has configured. Display-only: chat
+   has no currency switch and still offers everything. */
+const INR_ONLY = ['upi', 'razorpay'];
+
+function payable(p) {
+  if (p.code === 'balance') return true;
+  if ((me.currencies?.length || 1) < 2) return true;
+  const c = me.currencies?.[curIndex];
+  const viewingINR = (c?.code || me.currency || '').toUpperCase() === 'INR';
+  return INR_ONLY.includes(p.code) ? viewingINR : !viewingINR;
+}
+
 /* -------------------------------------------------------------- checkout */
 function payView(order) {
   if (requireSignIn()) return;
@@ -365,7 +384,7 @@ function payView(order) {
       <h1>Payment</h1>
       <p class="sub">${esc(order.name)} · ${order.qty || 1} × — total
         <b class="num">${money(order.amount)}</b></p>
-      ${me.providers.map((p) => `
+      ${me.providers.filter(payable).map((p) => `
         <div class="card" data-m="${p.code}" role="button" tabindex="0">
           <div class="between"><b>${esc(p.title)}</b><span class="muted">›</span></div>
           ${p.code === 'balance'
