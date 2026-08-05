@@ -462,7 +462,7 @@ class EvmTokenProvider:
             try:
                 async with aiohttp.ClientSession() as s:
                     async with s.post(url, json=payload,
-                                      timeout=aiohttp.ClientTimeout(total=20)) as r:
+                                      timeout=aiohttp.ClientTimeout(total=8)) as r:
                         data = await r.json()
             except Exception as e:
                 self.rpc_error = f"{url}: {type(e).__name__}: {e}"

@@ -151,7 +151,11 @@ class Config:
     order_ttl: int = int(os.getenv("ORDER_TTL_MINUTES", "30"))
     # abandoned checkouts are deleted after this many days. 0 keeps them forever.
     keep_dead_orders: int = int(os.getenv("KEEP_ABANDONED_ORDERS_DAYS", "7"))
-    poll_interval: int = int(os.getenv("POLL_INTERVAL_SECONDS", "25"))
+    poll_interval: int = int(os.getenv("POLL_INTERVAL_SECONDS", "15"))
+    # Longest a single rail may take before the watcher gives up on it for this
+    # tick. Rails are polled in parallel, so this caps the whole cycle, not the
+    # sum of them.
+    poll_timeout: int = int(os.getenv("POLL_TIMEOUT_SECONDS", "40"))
     low_stock: int = int(os.getenv("LOW_STOCK_ALERT", "3"))
 
     @property

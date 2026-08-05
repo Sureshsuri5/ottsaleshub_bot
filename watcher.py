@@ -48,10 +48,35 @@ async def _tick(bot: Bot) -> None:
         except Exception:
             pass
 
-    for prov in payments.enabled():
-        orders = await db.open_orders(prov.code)
-        if not orders:
-            continue
-        for oid, ref in await prov.poll(orders):
+    async def _poll_one(prov) -> list[tuple[int, str]]:
+        """One rail's poll, isolated.
+
+        Rails were polled one after another, so the slowest set the pace for
+        all of them — a chain whose public nodes are timing out could hold up
+        verification on a chain that was answering instantly. Each now runs on
+        its own, and one that hangs is abandoned for this tick rather than
+        allowed to stall the cycle.
+        """
+        try:
+            orders = await db.open_orders(prov.code)
+            if not orders:
+                return []
+            return await asyncio.wait_for(prov.poll(orders), timeout=cfg.poll_timeout)
+        except asyncio.TimeoutError:
+            log.warning("rail '%s' did not answer within %ss — skipped this tick",
+                        prov.code, cfg.poll_timeout)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("poll failed for rail '%s'", prov.code)
+        return []
+
+    rails = payments.enabled()
+    results = await asyncio.gather(*(_poll_one(p) for p in rails))
+
+    # Settle in sequence: delivery allocates stock, and serialising it here
+    # keeps two confirmations in the same tick from racing for the same units.
+    for prov, found in zip(rails, results):
+        for oid, ref in found:
             log.info("confirmed order %s via %s (%s)", oid, prov.code, ref)
             await delivery.settle(bot, oid, ref)
