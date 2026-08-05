@@ -255,7 +255,7 @@ MESSAGES: dict[str, Msg] = {
         "<b>+{bonus}</b> bonus on their first purchase.",
         "Refer: first-purchase bonus line", "Refer & Earn", ("bonus",)),
     "refer_transfer": Msg(
-        "Transfer earnings to your wallet anytime.",
+        "Transfer earnings to wallet anytime.",
         "Refer: transfer line", "Refer & Earn"),
 
     # ---------------------------------------------------------- account

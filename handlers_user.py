@@ -1039,6 +1039,8 @@ async def refer(c: CallbackQuery, state: FSMContext):
             what="purchase/deposit" if cfg.ref_on_deposit else "purchase"))
     if cfg.ref_bonus:
         terms.append(await texts.t("refer_bonus", bonus=cfg.money(cfg.ref_bonus)))
+    earning = "\n".join(terms)          # percentage + bonus, consecutive lines
+    terms = [earning] if earning else []
     terms.append(await texts.t("refer_transfer"))
 
     await show(c,
