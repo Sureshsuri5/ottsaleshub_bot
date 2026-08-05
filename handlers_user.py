@@ -865,16 +865,14 @@ async def topup_amount(m: Message, state: FSMContext):
     if code:
         # they typed it in the rail's currency; the wallet is in the shop's
         shop_amount = _to_shop_currency(amount, code)
-        prov = payments.get(code)
-        unit = prov.quote(1.0)[1]
-        line = (f"Top up {cfg.money(shop_amount)} via {prov.title}."
-                if unit.upper() == cfg.fiat.upper() else
-                f"Paying {amount:,.2f} {esc(unit)} via {prov.title} — "
-                f"<b>{cfg.money(shop_amount)}</b> will be added to your wallet.")
-        await m.answer(line)
-        return await m.answer("Opening payment…",
-                              reply_markup=k.kb([k.btn("Continue",
-                                  f"pay:topup:{int(round(shop_amount * 100))}:1:{code}")]))
+        # Straight to the payment details. There used to be a summary line and
+        # an "Opening payment…" message with a Continue button — three messages
+        # and a tap to reach a screen the buyer had already asked for by typing
+        # the amount. The conversion, when there is one, is on the payment
+        # screen itself.
+        cb = FakeCb(m).model_copy(update={
+            "data": f"pay:topup:{int(round(shop_amount * 100))}:1:{code}"})
+        return await create_order(cb.as_(m.bot), state)
     await m.answer(f"Top up {cfg.money(amount)} — choose a method:",
                    reply_markup=k.providers_kb(int(amount * 100), 1, kind="topup"))
 
