@@ -670,6 +670,23 @@ async def adm_flair(request):
             await db.set_setting("flair:sales_chat", chat)
             await flair.announce_sale(request.app["bot"], fake, None)
             return web.json_response({"ok": True})
+        if "menu_button" in d:
+            await db.set_setting("menu_button",
+                                 "app" if d["menu_button"] else "commands")
+            # applied straight away: a setting that needs a redeploy to take
+            # effect is one the admin will assume is broken
+            try:
+                from aiogram.types import (MenuButtonCommands, MenuButtonWebApp,
+                                           WebAppInfo)
+                bot = request.app["bot"]
+                if d["menu_button"] and cfg.miniapps_live:
+                    await bot.set_chat_menu_button(menu_button=MenuButtonWebApp(
+                        text=cfg.shop_name[:16] or "Shop",
+                        web_app=WebAppInfo(url=cfg.webapp_url)))
+                else:
+                    await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+            except Exception as e:
+                log.warning("menu button not applied: %s", e)
         if "miniapp_enabled" in d:
             await db.set_setting("miniapp_enabled",
                                  "1" if d["miniapp_enabled"] else "0")
@@ -701,6 +718,7 @@ async def adm_flair(request):
         "restock_chat": await db.setting("flair:restock_chat", ""),
         "maintenance": await db.setting("maintenance", "0") == "1",
         "miniapp_enabled": await db.setting("miniapp_enabled", "1") != "0",
+        "menu_button": await db.setting("menu_button", "commands") == "app",
         # every rail the shop could offer, with whether it's currently on and
         # whether it's actually configured — a rail can be "on" and still
         # hidden because it has no address set

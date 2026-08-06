@@ -183,15 +183,21 @@ async def _publish_menu_button(bot: Bot) -> None:
     Only when the URL is public https — Telegram rejects anything else, and a
     failed call would leave whatever was set before in place.
     """
+    # The button beside the chat box: either it opens the Mini App, or it lists
+    # the bot's commands. It can't do both, so which one is a shop decision
+    # rather than a fixed choice — the Mini App is still one tap away on the
+    # menu itself.
+    want_app = await db.setting("menu_button", "commands") == "app"
     try:
-        if cfg.miniapps_live:
+        if want_app and cfg.miniapps_live and flair.MINIAPP_ON:
             await bot.set_chat_menu_button(
                 menu_button=MenuButtonWebApp(
                     text=cfg.shop_name[:16] or "Shop",
                     web_app=WebAppInfo(url=cfg.webapp_url)))
-            log.info("menu button now opens the Mini App")
+            log.info("menu button opens the Mini App")
         else:
             await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+            log.info("menu button lists commands")
     except Exception as e:
         log.warning("could not set the menu button: %s", e)
 
