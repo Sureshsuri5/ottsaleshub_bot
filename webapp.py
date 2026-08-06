@@ -593,6 +593,60 @@ async def adm_withdrawals(request):
     return web.json_response({"pending": out})
 
 
+async def adm_wallet(request):
+    """Which derived accounts hold funds, for the panel.
+
+    Same source as /wallet in chat. The index is recovered by re-deriving from
+    the xpub rather than stored on the order — a stored index could drift out
+    of step with the address a buyer was actually shown.
+    """
+    import hdwallet
+    if not hdwallet.ready():
+        return web.json_response({"ready": False, "problem": hdwallet.problem()})
+
+    try:
+        nxt = int(await db.setting("hd:next_index", "0") or 0)
+    except ValueError:
+        nxt = 0
+    where = {}
+    for i in range(min(nxt, 2000)):
+        try:
+            where[hdwallet.address(i).lower()] = i
+        except Exception:
+            break
+
+    rows = await db.q(
+        "SELECT pay_address, status, amount, received, code FROM orders "
+        "WHERE pay_address != '' AND pay_address IS NOT NULL "
+        "ORDER BY id DESC LIMIT 300")
+    shared = (cfg.evm_address or "").lower()
+    acc: dict[str, dict] = {}
+    pending = 0
+    for r in rows:
+        if r["status"] == "pending":
+            pending += 1
+            continue
+        if r["status"] not in {"paid", "delivered", "credited"}:
+            continue
+        a = r["pay_address"]
+        e = acc.setdefault(a.lower(), {
+            "address": a, "amount": 0.0, "orders": 0, "late": 0,
+            "index": where.get(a.lower()),
+            "shared": a.lower() == shared})
+        e["amount"] += float(r["received"] or 0) or float(r["amount"] or 0)
+        e["orders"] += 1
+        e["late"] += 1 if r["status"] == "credited" else 0
+
+    out = sorted(acc.values(), key=lambda e: (e["index"] is None, e["index"] or 0))
+    return web.json_response({
+        "ready": True, "next_index": nxt, "path": hdwallet.PATH,
+        "pending": pending,
+        "total": round(sum(e["amount"] for e in out), 2),
+        "accounts": out,
+        "currency": cfg.symbol,
+    })
+
+
 async def adm_users(request):
     out = []
     for u in await db.list_users(request.query.get("q", ""), 60):
@@ -989,6 +1043,7 @@ def build_app(bot: Bot) -> web.Application:
     r.add_get("/api/admin/withdrawals", adm_withdrawals)
     r.add_post("/api/admin/withdrawals", adm_withdrawals)
     r.add_post("/api/terms", api_terms_accept)
+    r.add_get("/api/admin/wallet", adm_wallet)
     r.add_get("/api/admin/users", adm_users)
     r.add_post("/api/admin/user/{uid}", adm_user_action)
     r.add_post("/api/admin/broadcast", adm_broadcast)
