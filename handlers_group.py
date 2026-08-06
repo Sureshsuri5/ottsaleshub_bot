@@ -17,6 +17,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 import db
 import flair
+import keyboards as k
 import texts
 from config import cfg
 
@@ -96,15 +97,20 @@ def buy_kb(hits) -> InlineKeyboardMarkup:
 
     A group reply competes with everything else on screen; a neutral button
     disappears into the conversation.
+
+    Built through keyboards.url_btn so the `buy` slot's custom icon is attached
+    the same way the product page does it. Constructing the button by hand here
+    meant no icon was ever sent — and because label() strips the plain emoji
+    whenever a custom icon is configured, the button ended up with neither.
     """
     rows = []
     for p in hits:
         # the same slot the product page's Buy button uses, so the icon a
         # buyer sees in the group is the icon they see after tapping through
         label = flair.label("buy", f"Buy {p['name']}")
-        rows.append([InlineKeyboardButton(
-            text=label, style="primary",
-            url=f"https://t.me/{flair.BOT_USERNAME}?start=p_{p['id']}")])
+        rows.append([k.url_btn(
+            label, f"https://t.me/{flair.BOT_USERNAME}?start=p_{p['id']}",
+            style="primary", icon_slot="buy")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
