@@ -194,10 +194,12 @@ def shop_kb(prods, counts: dict[int, int], page: int = 0,
     if pages > 1:
         nav = []
         if page > 0:
-            nav.append(btn(flair.label("page_prev", "Prev"), f"shop:{page - 1}", icon_slot="page_prev"))
+            nav.append(btn(flair.label("page_prev", "Prev"), f"shop:{page - 1}",
+                               style="primary", icon_slot="page_prev"))
         nav.append(btn(f"{page + 1}/{pages}", "noop"))
         if page < pages - 1:
-            nav.append(btn(flair.label("page_next", "Next"), f"shop:{page + 1}", icon_slot="page_next"))
+            nav.append(btn(flair.label("page_next", "Next"), f"shop:{page + 1}",
+                               style="primary", icon_slot="page_next"))
         rows.append(nav)
 
     rows.append([btn(flair.label("refresh", "Refresh Stock"), f"shop:{page}",
@@ -384,9 +386,11 @@ def orders_kb(rows, page: int = 0, total: int = 0) -> InlineKeyboardMarkup:
                 f"ord:{o['id']}")] for o in rows]
     nav = []
     if page > 0:
-        nav.append(btn(flair.label("page_prev", "Prev"), f"orders:{page - 1}", icon_slot="page_prev"))
+        nav.append(btn(flair.label("page_prev", "Prev"), f"orders:{page - 1}",
+                           style="primary", icon_slot="page_prev"))
     if (page + 1) * ORDERS_PAGE < total:
-        nav.append(btn(flair.label("page_next", "Next"), f"orders:{page + 1}", icon_slot="page_next"))
+        nav.append(btn(flair.label("page_next", "Next"), f"orders:{page + 1}",
+                           style="primary", icon_slot="page_next"))
     if nav:
         out.append(nav)
     out.append([btn(flair.label("back", "Back"), "home", icon_slot="back")])
