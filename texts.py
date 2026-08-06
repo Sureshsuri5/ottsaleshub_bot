@@ -124,6 +124,12 @@ MESSAGES: dict[str, Msg] = {
         "network — funds sent to the wrong network cannot be recovered.\n\n"
         "Contact support before ordering if anything here is unclear.",
         "Terms &amp; conditions (Mini App)", "Shop", ()),
+    "maintenance": Msg(
+        "{{m_warn}} <b>Under maintenance</b>\n\n"
+        "The shop is briefly closed for updates. Nothing you've already paid "
+        "for is affected — orders in progress will still be delivered.\n\n"
+        "Please try again shortly.",
+        "Shown while maintenance mode is on", "Shop", ()),
     "pay_rest": Msg(
         "{{m_warn}} Pay the remaining amount via:",
         "Prompt when wallet covers part of an order", "Checkout", ()),

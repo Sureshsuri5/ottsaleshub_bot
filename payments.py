@@ -1156,12 +1156,22 @@ MANUAL_RAILS = {
 RAIL_ACCOUNTS: dict[str, str] = {}      # code -> account id, filled from settings
 
 
+# Rails switched off from the admin panel. Held in memory and refreshed the
+# same way account details are, so enabled() can stay synchronous — it is
+# called on every checkout screen and making it async would ripple everywhere.
+DISABLED: set[str] = set()
+
+
 async def reload_rails() -> None:
     RAIL_ACCOUNTS.clear()
     for code in MANUAL_RAILS:
         v = (await db.setting(f"rail:{code}", "")).strip()
         if v:
             RAIL_ACCOUNTS[code] = v
+
+    DISABLED.clear()
+    off = (await db.setting("rails:disabled", "")).strip()
+    DISABLED.update(c for c in (x.strip() for x in off.split(",")) if c)
 
 
 BINANCE_API = "https://api.binance.com"
@@ -1443,7 +1453,12 @@ def enabled() -> list:
     codes = list(cfg.providers)
     if "balance" not in codes:
         codes.insert(0, "balance")
-    return [REGISTRY[c] for c in codes if c in REGISTRY and _ready(c)]
+    # A rail switched off in the panel is hidden from buyers and never polled.
+    # Balance is exempt: it is where deposits land, and turning it off would
+    # strand every wallet in the shop.
+    return [REGISTRY[c] for c in codes
+            if c in REGISTRY and _ready(c)
+            and (c == "balance" or c not in DISABLED)]
 
 
 def misconfigured() -> list[str]:

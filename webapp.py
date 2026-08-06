@@ -670,6 +670,13 @@ async def adm_flair(request):
             await db.set_setting("flair:sales_chat", chat)
             await flair.announce_sale(request.app["bot"], fake, None)
             return web.json_response({"ok": True})
+        if "maintenance" in d:
+            await db.set_setting("maintenance", "1" if d["maintenance"] else "0")
+        if "rails_disabled" in d:
+            off = [str(c).strip() for c in (d["rails_disabled"] or [])
+                   if str(c).strip() and str(c).strip() != "balance"]
+            await db.set_setting("rails:disabled", ",".join(off))
+            await payments.reload_rails()
         for key in ("sales_chat", "restock_chat", "hide_amount",
                     "sale_template", "sale_button"):
             if key in d:
@@ -684,6 +691,15 @@ async def adm_flair(request):
     out = {
         "sales_chat": await db.setting("flair:sales_chat", ""),
         "restock_chat": await db.setting("flair:restock_chat", ""),
+        "maintenance": await db.setting("maintenance", "0") == "1",
+        # every rail the shop could offer, with whether it's currently on and
+        # whether it's actually configured — a rail can be "on" and still
+        # hidden because it has no address set
+        "rails": [{"code": p.code, "title": p.title,
+                   "on": p.code not in payments.DISABLED,
+                   "ready": payments._ready(p.code)}
+                  for p in (payments.REGISTRY[c] for c in cfg.providers
+                            if c in payments.REGISTRY)],
         "hide_amount": await db.setting("flair:hide_amount", "0"),
         "sale_template": await db.setting("flair:sale_template", flair.DEFAULT_SALE_TEMPLATE),
         "sale_button": await db.setting("flair:sale_button", "0"),
@@ -821,6 +837,26 @@ def _page(name: str):
 
 
 @web.middleware
+async def maintenance_gate(request, handler):
+    """Close the Mini App too while maintenance is on.
+
+    Blocking only the chat would leave the web app fully functional — buyers
+    would keep checking out through a storefront the shop believes is shut.
+    Admin routes stay open so the switch can be turned back off.
+    """
+    if request.path.startswith(("/api/admin", "/health", "/build", "/tg/")) \
+            or request.method == "GET" and not request.path.startswith("/api/"):
+        return await handler(request)
+    if await db.setting("maintenance", "0") == "1" \
+            and not cfg.is_admin(request.get("uid") or 0):
+        import texts
+        return web.json_response(
+            {"error": await texts.t("maintenance"), "maintenance": True},
+            status=503)
+    return await handler(request)
+
+
+@web.middleware
 async def json_errors(request, handler):
     """Turn an unhandled exception into JSON the Mini App can read.
 
@@ -845,7 +881,9 @@ async def json_errors(request, handler):
 
 
 def build_app(bot: Bot) -> web.Application:
-    app = web.Application(middlewares=[json_errors, api_rate_limit, auth_middleware])
+    # auth first: the maintenance gate needs request["uid"] to spot an admin
+    app = web.Application(middlewares=[json_errors, api_rate_limit,
+                                       auth_middleware, maintenance_gate])
     app["bot"] = bot
     r = app.router
 

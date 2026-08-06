@@ -32,6 +32,39 @@ logging.basicConfig(
 log = logging.getLogger("shopbot")
 
 
+class MaintenanceMiddleware(BaseMiddleware):
+    """Holds the shop closed while an admin works on it.
+
+    Runs before everything else, so no handler fires and nothing can be bought,
+    deposited or withdrawn. Admins pass through untouched — you need the panel
+    working to turn it back off.
+
+    The payment watcher deliberately keeps running underneath. Someone who
+    paid a minute before you flipped the switch still gets their goods; taking
+    the poller down would leave real money confirmed on-chain and undelivered.
+    """
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: Update,
+        data: dict[str, Any],
+    ) -> Any:
+        if await db.setting("maintenance", "0") != "1":
+            return await handler(event, data)
+        user = data.get("event_from_user")
+        if user and cfg.is_admin(user.id):
+            return await handler(event, data)
+        import texts
+        inner = event.event
+        note = await texts.t("maintenance")
+        if isinstance(inner, CallbackQuery):
+            await inner.answer(note[:190], show_alert=True)
+        elif isinstance(inner, Message):
+            await inner.answer(note)
+        return None
+
+
 class BanMiddleware(BaseMiddleware):
     """Registers every user and blocks banned ones before handlers run."""
 
@@ -91,6 +124,7 @@ async def on_error(event: ErrorEvent) -> bool:
 def build_dispatcher() -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
     dp.errors.register(on_error)
+    dp.update.middleware(MaintenanceMiddleware())
     dp.update.middleware(BanMiddleware())
     # The shop is a private-chat experience. In a group the bot only posts the
     # sales feed, and a menu carrying a Mini App button is rejected there

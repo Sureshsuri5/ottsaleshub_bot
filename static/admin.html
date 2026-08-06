@@ -534,6 +534,27 @@ function moreView() {
       <p class="sub">Posts every sale to a group. The buyer's name, username and id never
         leave the bot — only a hashed tag, so repeat buyers look consistent without being
         identifiable.</p>
+      <label class="row" style="justify-content:space-between">
+        <span><b>Maintenance mode</b><br>
+          <i class="muted">Closes the shop for everyone but admins. Payments
+          already in flight are still delivered.</i></span>
+        <input type="checkbox" id="maint" ${f.maintenance ? 'checked' : ''}>
+      </label>
+
+      <label>Payment methods</label>
+      <p class="sub" style="margin-top:0">Switch a rail off to hide it from
+        buyers and stop polling it. Wallet balance can't be switched off —
+        it's where deposits land. A rail marked <i>not configured</i> stays
+        hidden until you add its account details.</p>
+      <div id="rails">
+        ${(f.rails || []).map((r) => `
+          <label class="row" style="justify-content:space-between">
+            <span>${esc(r.title)}${r.ready ? '' : ' <i class="muted">— not configured</i>'}</span>
+            <input type="checkbox" class="rail" data-code="${esc(r.code)}"
+                   ${r.on ? 'checked' : ''}>
+          </label>`).join('')}
+      </div>
+
       <label>Group or channel id</label>
       <input id="feed" placeholder="-1001234567890" value="${esc(f.sales_chat)}">
       <label>Restock &amp; new product announcements</label>
@@ -651,7 +672,11 @@ function moreView() {
         });
     });
     const flairBody = () => {
-      const out = { sales_chat: view.querySelector('#feed').value.trim(),
+      const off = [...view.querySelectorAll('.rail')]
+        .filter((i) => !i.checked).map((i) => i.dataset.code);
+      const out = { maintenance: view.querySelector('#maint').checked,
+                    rails_disabled: off,
+                    sales_chat: view.querySelector('#feed').value.trim(),
                     restock_chat: view.querySelector('#restock').value.trim(),
                     sale_template: view.querySelector('#tpl').value.trim() };
       view.querySelectorAll('.fx').forEach((i) => { out[i.dataset.k] = i.value.trim(); });
