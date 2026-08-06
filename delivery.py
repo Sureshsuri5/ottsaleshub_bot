@@ -316,10 +316,19 @@ async def announce_restocks(bot: Bot) -> None:
             continue
 
         try:
-            body = await texts.t(kind,
-                                 product=flair.product_tag(p),
-                                 price=cfg.money(p["price"]),
-                                 stock="∞" if p["infinite"] else avail)
+            # The description the product page shows, as a quote block so a
+            # long one stays collapsible instead of burying the Buy button.
+            # Trimmed: a group post is a teaser, the full text is one tap away.
+            desc = (p["description"] or "").strip()
+            if len(desc) > 400:
+                desc = desc[:400].rsplit(" ", 1)[0] + "…"
+            body = await texts.t(
+                kind,
+                product=flair.product_tag(p),
+                price=cfg.money(p["price"]),
+                stock="∞" if p["infinite"] else avail,
+                desc=f"\n<blockquote expandable>{_esc(desc)}</blockquote>\n"
+                     if desc else "")
             await bot.send_message(
                 chat, await flair.render(body),
                 reply_markup=k.kb([k.url_btn(

@@ -96,17 +96,18 @@ MESSAGES: dict[str, Msg] = {
     "newproduct_group": Msg(
         "{{m_ok}} <b>New product</b>\n\n"
         "{product}\n"
-        "{{g_price}} <b>{price}</b> · {{g_stock}} {stock} available\n\n"
+        "{{g_price}} <b>{price}</b> · {{g_stock}} {stock} available\n"
+        "{desc}\n"
         "{{g_title}} Tap below to buy:",
         "New product announcement (group)", "Groups",
-        ("product", "price", "stock")),
+        ("product", "price", "stock", "desc")),
     "restock_group": Msg(
         "{{m_box}} <b>Back in stock</b>\n\n"
         "{product}\n"
         "{{g_price}} <b>{price}</b> · {{g_stock}} {stock} available\n\n"
         "<i>First come, first served.</i>",
         "Restock announcement (group)", "Groups",
-        ("product", "price", "stock")),
+        ("product", "price", "stock", "desc")),
     "restock_alert": Msg(
         "{{m_ok}} <b>Back in stock</b>\n\n"
         "{emoji} <b>{product}</b> is available again at <b>{price}</b>.\n\n"

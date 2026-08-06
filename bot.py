@@ -57,6 +57,12 @@ class MaintenanceMiddleware(BaseMiddleware):
             return await handler(event, data)
         import texts
         inner = event.event
+        # Groups get silence, not a notice. The shop being closed is between
+        # the bot and its buyers; announcing it to a chat full of people who
+        # merely mentioned a product name is noise in someone else's room.
+        chat = getattr(inner, "chat", None)
+        if chat is not None and getattr(chat, "type", "private") != "private":
+            return None
         note = await texts.t("maintenance")
         if isinstance(inner, CallbackQuery):
             await inner.answer(note[:190], show_alert=True)
