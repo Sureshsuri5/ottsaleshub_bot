@@ -77,6 +77,11 @@ async def _tick(bot: Bot) -> None:
         """
         try:
             orders = await db.open_orders(prov.code)
+            # addresses from recently expired orders stay in the sweep, so a
+            # late payment reaches its buyer instead of sitting unnoticed
+            if cfg.late_hours > 0:
+                orders = list(orders) + list(
+                    await db.late_orders(prov.code, cfg.late_hours))
             if not orders:
                 return []
             return await asyncio.wait_for(prov.poll(orders), timeout=cfg.poll_timeout)

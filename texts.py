@@ -205,6 +205,14 @@ MESSAGES: dict[str, Msg] = {
         "<code>{address}</code>",
         "Part-payment received", "Delivery",
         ("sent", "total", "short", "address", "oid")),
+    "late_credited": Msg(
+        "{{tu_added}} <b>Payment received — added to your wallet</b>\n\n"
+        "Order #{oid} had already expired, so it wasn't delivered. Your "
+        "<b>{amount}</b> is safe and is now wallet balance.\n"
+        "New balance: <b>{balance}</b>\n\n"
+        "<i>Place the order again and pay from your balance — it's instant.</i>",
+        "Payment arrived after the order expired", "Delivery",
+        ("amount", "balance", "oid")),
     "overpay_credited": Msg(
         "{{tu_added}} You sent <b>{sent}</b>, which is <b>{extra}</b> more than "
         "the order total.\n"

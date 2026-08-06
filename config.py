@@ -164,6 +164,9 @@ class Config:
     # tick. Rails are polled in parallel, so this caps the whole cycle, not the
     # sum of them.
     poll_timeout: int = int(os.getenv("POLL_TIMEOUT_SECONDS", "40"))
+    # How long an expired order's deposit address keeps being watched, so a
+    # late payment is credited instead of stranded. 0 turns it off.
+    late_hours: int = int(os.getenv("LATE_PAYMENT_HOURS", "48"))
     low_stock: int = int(os.getenv("LOW_STOCK_ALERT", "3"))
 
     @property

@@ -908,6 +908,25 @@ async def open_orders(provider: str | None = None):
     return await q(sql + " ORDER BY id", args)
 
 
+async def late_orders(provider: str | None = None, hours: int = 48):
+    """Recently closed orders whose deposit address is still worth watching.
+
+    A buyer who pays after their order expired has sent real money to an
+    address only they were ever shown. Nothing else would notice it: the
+    watcher polls pending orders, and this one isn't pending any more. Keeping
+    the address in the sweep for a couple of days turns a support ticket into
+    an automatic wallet credit.
+    """
+    sql = ("SELECT * FROM orders WHERE status IN ('expired', 'cancelled') "
+           "AND pay_address IS NOT NULL AND pay_address != '' "
+           "AND created_at > datetime('now', ?)")
+    args: list[Any] = [f"-{max(1, hours)} hours"]
+    if provider:
+        sql += " AND provider = ?"
+        args.append(provider)
+    return await q(sql + " ORDER BY id", args)
+
+
 async def pending_reviews():
     return await q("SELECT * FROM orders WHERE status = 'awaiting_review' ORDER BY id")
 

@@ -65,6 +65,12 @@ async def settle(bot: Bot, oid: int, ref: str | None = None) -> bool:
         return False
     if o["status"] in {"paid", "delivered"}:
         return True                      # already handled — never double-deliver
+    if o["status"] in {"expired", "cancelled"} and o["pay_address"]:
+        # Money that arrived after the order closed. The goods aren't sent —
+        # stock may be gone and the price may have moved — but the payment is
+        # real and it's theirs, so it becomes wallet balance they can spend
+        # immediately on a fresh order.
+        return await _credit_late(bot, o, ref)
     if o["status"] in {"cancelled", "rejected"}:
         return False
 
@@ -221,6 +227,27 @@ async def _pay_referrer(bot: Bot, o, deposit: bool = False) -> None:
                 f"+{cfg.money(reward)} — {', '.join(why)}.\n"
                 f"Available to transfer: <b>{cfg.money(r['available'])}</b>",
                 reply_markup=k.home_kb())
+
+
+async def _credit_late(bot: Bot, o, ref: str | None) -> bool:
+    """Turn a payment on a closed order into wallet balance."""
+    amount = round(float(o["received"] or 0), 2) or float(o["amount"] or 0)
+    if amount < 0.01:
+        return False
+    await db.add_balance(o["user_id"], amount)
+    await db.set_order(o["id"], status="credited",
+                       external_ref=ref or o["external_ref"])
+    user = await db.get_user(o["user_id"])
+    await _safe(bot, o["user_id"], await texts.t(
+        "late_credited", amount=cfg.money(amount),
+        balance=cfg.money(user["balance"] if user else amount),
+        oid=o["code"] or o["id"]))
+    await notify_admins(
+        bot, f"💰 <b>Late payment</b> — order #{o['code'] or o['id']} had "
+             f"expired. {cfg.money(amount)} credited to "
+             f"<code>{o['user_id']}</code>'s wallet.")
+    log.info("late payment on order %s credited: %s", o["id"], amount)
+    return True
 
 
 async def _refund(bot: Bot, o, reason: str) -> None:

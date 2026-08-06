@@ -516,10 +516,13 @@ async def wallet_cmd(m: Message, state: FSMContext):
         "WHERE pay_address != '' AND pay_address IS NOT NULL "
         "ORDER BY id DESC LIMIT 200")
 
+    # 'credited' belongs here too: a payment that arrived after the order
+    # expired is real money sitting on a real address. Leaving it out would
+    # hide funds from the one list used to decide what to sweep.
     funded: dict[str, list] = {}
     pending = 0
     for r in rows:
-        if r["status"] in {"paid", "delivered"}:
+        if r["status"] in {"paid", "delivered", "credited"}:
             funded.setdefault(r["pay_address"].lower(), []).append(r)
         elif r["status"] == "pending":
             pending += 1
@@ -548,7 +551,9 @@ async def wallet_cmd(m: Message, state: FSMContext):
             seat = "Shared address (orders before per-order addresses)"
         else:
             seat = "Unknown address"
-        lines.append(f"<b>{seat}</b> — {cfg.money(got)}")
+        late = sum(1 for o in orders if o["status"] == "credited")
+        lines.append(f"<b>{seat}</b> — {cfg.money(got)}"
+                     + (f" · {late} late payment(s)" if late else ""))
         lines.append(f"<code>{esc(orders[0]['pay_address'])}</code>")
         lines.append("")
 
