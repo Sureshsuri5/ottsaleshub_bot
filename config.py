@@ -116,6 +116,9 @@ class Config:
     webhook_secret: str = os.getenv("WEBHOOK_SECRET", "")
 
     sales_chat: str = os.getenv("SALES_CHAT_ID", "")
+    # Where restock announcements go. Falls back to the sales feed chat, since
+    # most shops want both in the same place.
+    restock_chat: str = os.getenv("RESTOCK_CHAT_ID", "")
 
     channel_url: str = os.getenv("CHANNEL_URL", "")
     group_url: str = os.getenv("GROUP_URL", "")

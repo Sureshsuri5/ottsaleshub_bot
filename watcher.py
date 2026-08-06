@@ -41,6 +41,11 @@ async def _tick(bot: Bot) -> None:
 
     # buyers who sent too little hear about it in the same pass
     try:
+        await delivery.announce_restocks(bot)
+    except Exception:
+        log.exception("could not announce restocks")
+
+    try:
         await delivery.notify_restock(bot)
     except Exception:
         log.exception("could not send restock alerts")

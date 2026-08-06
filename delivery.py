@@ -272,6 +272,68 @@ async def _credit_overpayment(bot: Bot, o, notify: bool = True) -> float:
     return extra
 
 
+async def announce_restocks(bot: Bot) -> None:
+    """Post to the group when a product is new, or comes back from sold out.
+
+    Availability is compared against what was last seen, not against a hook in
+    whichever code path added the stock — admin panel, web panel and bulk
+    upload all add stock differently, and a hook in one of them would silently
+    miss the others.
+
+    The very first pass records the whole catalogue and announces nothing,
+    otherwise every existing product would be announced at once the moment this
+    ships. A `bootstrapped` flag marks that pass, which is what lets a product
+    first seen *later* be recognised as genuinely new rather than pre-existing.
+    """
+    chat = (cfg.restock_chat or await flair.sales_chat()).strip()
+    first_run = await db.setting("restock:bootstrapped", "") != "1"
+
+    for p in await db.products(None, only_active=True):
+        pid = p["id"]
+        avail = await db.available(pid)
+        in_stock = avail > 0 or p["infinite"]
+        now = "1" if in_stock else "0"
+        was = await db.setting(f"restock:instock:{pid}", "")
+        announced_new = await db.setting(f"restock:new:{pid}", "") == "1"
+
+        if was != now:
+            await db.set_setting(f"restock:instock:{pid}", now)
+
+        if first_run:
+            # everything that already exists counts as known, new or not
+            await db.set_setting(f"restock:new:{pid}", "1")
+            continue
+        if not chat or not in_stock:
+            continue
+
+        if not announced_new:
+            # a product the bot has never seen in stock before
+            await db.set_setting(f"restock:new:{pid}", "1")
+            kind = "newproduct_group"
+        elif was == "0":
+            kind = "restock_group"
+        else:
+            continue
+
+        try:
+            body = await texts.t(kind,
+                                 product=flair.product_tag(p),
+                                 price=cfg.money(p["price"]),
+                                 stock="∞" if p["infinite"] else avail)
+            await bot.send_message(
+                chat, await flair.render(body),
+                reply_markup=k.kb([k.url_btn(
+                    flair.label("buy", f"Buy {p['name']}"),
+                    f"https://t.me/{flair.BOT_USERNAME}?start=p_{pid}",
+                    style="primary", icon_slot="buy")]))
+            log.info("%s announced for product %s", kind, pid)
+        except Exception as e:
+            log.warning("announcement failed for %s: %s", pid, e)
+
+    if first_run:
+        await db.set_setting("restock:bootstrapped", "1")
+
+
 async def notify_restock(bot: Bot) -> None:
     """Tell everyone waiting that a sold-out product is available again.
 
