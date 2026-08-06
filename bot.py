@@ -150,6 +150,8 @@ USER_COMMANDS = [
     ("menu", "Main menu"),
     ("order", "Look up an order by its ID"),
 ]
+# Not published to Telegram — see _publish_commands(). Kept as the one place
+# that lists what an admin can type, so it doesn't drift out of the README.
 ADMIN_COMMANDS = USER_COMMANDS + [
     ("admin", "Admin panel"),
     ("status", "Bot status and diagnostics"),
@@ -165,14 +167,22 @@ ADMIN_COMMANDS = USER_COMMANDS + [
 
 
 async def _publish_commands(bot: Bot) -> None:
+    """Publish the buyer command list, and only that.
+
+    Admin commands are deliberately not registered anywhere. They all work
+    exactly as before — typing /admin or /backup still does — but they stay off
+    the menu beside the chat box, which is a list buyers can also see the shape
+    of. Fewer things on the menu also means the three commands that matter to a
+    buyer aren't buried under ten that don't.
+    """
     try:
         await bot.set_my_commands(
             [BotCommand(command=c, description=d) for c, d in USER_COMMANDS],
             scope=BotCommandScopeAllPrivateChats())
+        # clear any admin list published by an earlier version, or it lingers
+        # in Telegram's cache for those chats indefinitely
         for admin_id in cfg.admin_ids:
-            await bot.set_my_commands(
-                [BotCommand(command=c, description=d) for c, d in ADMIN_COMMANDS],
-                scope=BotCommandScopeChat(chat_id=admin_id))
+            await bot.delete_my_commands(scope=BotCommandScopeChat(chat_id=admin_id))
     except Exception as e:
         log.warning("could not publish the command list: %s", e)
 
