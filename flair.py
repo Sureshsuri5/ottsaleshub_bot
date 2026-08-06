@@ -174,7 +174,6 @@ _STATIC_SLOTS = {
     "g_title":       ("🛍", "Group reply: product", "Groups"),
     "g_price":       ("💵", "Group reply: price",  "Groups"),
     "g_stock":       ("📦", "Group reply: stock",  "Groups"),
-    "g_buy":         ("🛒", "Group reply: Buy button", "Groups"),
     "tu_title":      ("✅", "Top-up: confirmed",  "Deposit"),
     "tu_added":      ("➕", "Top-up: amount added", "Deposit"),
     "tu_balance":    ("👛", "Top-up: new balance", "Deposit"),

@@ -55,22 +55,32 @@ def product_tokens(p) -> set[str]:
 
 
 def match_products(text: str, products) -> list:
-    """Every in-stock product the message names, best match first.
+    """Every in-stock product the message names, in the order it names them.
 
     A single distinctive word is enough ("gemini" finds Jio Gemini AI Pro 18m),
     which is how people actually ask, but generic words are ignored so a
     passing "premium" doesn't return the whole catalogue.
+
+    Order follows the message, not the match strength. Someone who asks for
+    "gemini, google and notion" is reading the reply against what they typed,
+    and a list that comes back in a different order looks like the bot answered
+    a different question. Ties — two products matching the same word — fall
+    back to the more strongly matched, then the shorter name.
     """
-    said = tokens(text) - STOP
+    words = [w for w in re.split(r"[^a-z0-9]+", (text or "").lower())
+             if len(w) >= MIN_TOKEN]
+    said = set(words) - STOP
     if not said:
         return []
     scored = []
     for p in products:
         overlap = said & product_tokens(p)
-        if overlap:
-            scored.append((len(overlap), -len(p["name"]), p))
-    scored.sort(key=lambda t: (-t[0], t[1]))
-    return [p for _, _, p in scored[:MAX_HITS]]
+        if not overlap:
+            continue
+        first = min(words.index(w) for w in overlap)
+        scored.append((first, -len(overlap), len(p["name"]), p))
+    scored.sort(key=lambda t: t[:3])
+    return [p for *_, p in scored[:MAX_HITS]]
 
 
 def _cooled(chat_id: int) -> bool:
@@ -82,11 +92,19 @@ def _cooled(chat_id: int) -> bool:
 
 
 def buy_kb(hits) -> InlineKeyboardMarkup:
+    """One deep link per match, blue so they read as the action in a busy chat.
+
+    A group reply competes with everything else on screen; a neutral button
+    disappears into the conversation.
+    """
     rows = []
     for p in hits:
-        label = flair.label("g_buy", f"Buy {p['name']}")
+        # the same slot the product page's Buy button uses, so the icon a
+        # buyer sees in the group is the icon they see after tapping through
+        label = flair.label("buy", f"Buy {p['name']}")
         rows.append([InlineKeyboardButton(
-            text=label, url=f"https://t.me/{flair.BOT_USERNAME}?start=p_{p['id']}")])
+            text=label, style="primary",
+            url=f"https://t.me/{flair.BOT_USERNAME}?start=p_{p['id']}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -105,8 +123,10 @@ async def mention(m: Message) -> None:
     if not hits or not _cooled(m.chat.id):
         return
 
-    names = ", ".join(f"{(p['emoji'] or '').strip()} {esc(p['name'])}".strip()
-                      for p in hits)
+    # product_tag() renders each product's own premium emoji when one is set,
+    # so a name looks the same in a group as it does in the shop list. Building
+    # the string by hand here meant the plain fallback every time.
+    names = ", ".join(flair.product_tag(p) for p in hits)
     body = await texts.t("group_hit", products=names, count=len(hits),
                          shop=esc(cfg.shop_name))
     try:
