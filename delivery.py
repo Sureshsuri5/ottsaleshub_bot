@@ -285,7 +285,7 @@ async def announce_restocks(bot: Bot) -> None:
     ships. A `bootstrapped` flag marks that pass, which is what lets a product
     first seen *later* be recognised as genuinely new rather than pre-existing.
     """
-    chat = (cfg.restock_chat or await flair.sales_chat()).strip()
+    chat = (await flair.restock_chat()).strip()
     first_run = await db.setting("restock:bootstrapped", "") != "1"
 
     for p in await db.products(None, only_active=True):

@@ -118,6 +118,11 @@ def buy_kb(hits) -> InlineKeyboardMarkup:
 async def mention(m: Message) -> None:
     if await db.setting("group_autoreply", "1") != "1":
         return
+    # Don't answer the shop's own staff. An admin posting a stock list or
+    # price update names half the catalogue, and the bot replying underneath
+    # with Buy buttons reads as spam in the shop's own group.
+    if m.from_user and cfg.is_admin(m.from_user.id):
+        return
     products = await db.products(None, only_active=True)
     if not products:
         return

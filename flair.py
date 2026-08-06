@@ -458,6 +458,16 @@ def buyer_code(user_id: int) -> str:
     return mac.hexdigest()[:4].upper()
 
 
+async def restock_chat() -> str:
+    """Where new-product and back-in-stock notices go.
+
+    Panel setting first, then RESTOCK_CHAT_ID, then the sales feed chat — most
+    shops want both in the same group and shouldn't have to set it twice.
+    """
+    chat = (await db.setting("flair:restock_chat", cfg.restock_chat)).strip()
+    return chat or await sales_chat()
+
+
 async def sales_chat() -> str:
     """Panel setting wins; SALES_CHAT_ID in .env is the bootstrap default."""
     return (await db.setting("flair:sales_chat", cfg.sales_chat)).strip()

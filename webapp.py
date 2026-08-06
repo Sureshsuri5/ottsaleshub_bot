@@ -670,7 +670,8 @@ async def adm_flair(request):
             await db.set_setting("flair:sales_chat", chat)
             await flair.announce_sale(request.app["bot"], fake, None)
             return web.json_response({"ok": True})
-        for key in ("sales_chat", "hide_amount", "sale_template", "sale_button"):
+        for key in ("sales_chat", "restock_chat", "hide_amount",
+                    "sale_template", "sale_button"):
             if key in d:
                 await db.set_setting(f"flair:{key}", str(d[key]))
         for slot in flair.SLOTS:
@@ -682,10 +683,11 @@ async def adm_flair(request):
     await flair.reload()
     out = {
         "sales_chat": await db.setting("flair:sales_chat", ""),
+        "restock_chat": await db.setting("flair:restock_chat", ""),
         "hide_amount": await db.setting("flair:hide_amount", "0"),
         "sale_template": await db.setting("flair:sale_template", flair.DEFAULT_SALE_TEMPLATE),
         "sale_button": await db.setting("flair:sale_button", "0"),
-        "custom_emoji_working": flair._custom_ok,
+        "custom_emoji_working": flair.custom_ok(),
         "slots": [{"name": n, "fallback": flair.SLOTS[n], "label": flair.slot_label(n),
                    "section": flair.slot_section(n),
                    "emoji": await db.setting(f"flair:emoji:{n}", ""),

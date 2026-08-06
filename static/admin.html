@@ -536,6 +536,12 @@ function moreView() {
         identifiable.</p>
       <label>Group or channel id</label>
       <input id="feed" placeholder="-1001234567890" value="${esc(f.sales_chat)}">
+      <label>Restock &amp; new product announcements</label>
+      <input id="restock" placeholder="same as above"
+             value="${esc(f.restock_chat || '')}">
+      <p class="sub" style="margin-top:6px">Where "new product" and "back in
+        stock" notices are posted, each with a Buy button. Leave blank to use
+        the group above. The bot must be a member and able to post.</p>
       <label>Message template</label>
       <textarea id="tpl" style="min-height:60px">${esc(f.sale_template)}</textarea>
       <p class="sub" style="margin-top:6px">Placeholders: <code>{qty}</code>
@@ -646,6 +652,7 @@ function moreView() {
     });
     const flairBody = () => {
       const out = { sales_chat: view.querySelector('#feed').value.trim(),
+                    restock_chat: view.querySelector('#restock').value.trim(),
                     sale_template: view.querySelector('#tpl').value.trim() };
       view.querySelectorAll('.fx').forEach((i) => { out[i.dataset.k] = i.value.trim(); });
       return out;
