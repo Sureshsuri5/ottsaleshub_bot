@@ -83,12 +83,16 @@ def address(index: int) -> str:
     return acct.AddressIndex(index).PublicKey().ToAddress()
 
 
-def preview(count: int = 3) -> list[str]:
-    """First few addresses, for checking against your own wallet.
+def preview(count: int = 3, start: int = 0) -> list[tuple[int, str]]:
+    """Addresses with their indexes, for checking against your own wallet.
+
+    Defaults to the beginning, but callers showing live state should pass the
+    next index — the first two addresses stop being interesting the moment
+    they've been issued, and repeating them looks like the counter is stuck.
 
     Import the seed into MetaMask and compare. If these don't match, stop and
     fix the xpub before taking a single payment.
     """
     if not ready():
         return []
-    return [address(i) for i in range(count)]
+    return [(i, address(i)) for i in range(start, start + count)]

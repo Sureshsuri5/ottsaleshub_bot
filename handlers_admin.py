@@ -615,10 +615,16 @@ async def status_cmd(m: Message, state: FSMContext):
     import hdwallet
     if hdwallet.ready():
         nxt = await db.setting("hd:next_index", "0")
+        try:
+            nxt_i = int(nxt)
+        except ValueError:
+            nxt_i = 0
         lines.append(f"🔑 Deposit addresses: <b>one per order</b> · "
                      f"{esc(hdwallet.PATH.format(i=nxt))} next")
-        for i, a in enumerate(hdwallet.preview(2)):
-            lines.append(f"    <code>{esc(a)}</code>  (index {i})")
+        # the ones about to be handed out, not the ones already spent
+        for i, a in hdwallet.preview(2, nxt_i):
+            lines.append(f"    <code>{esc(a)}</code>  (index {i}, "
+                         f"MetaMask account {i + 1})")
     elif cfg.evm_xpub:
         lines.append(f"🔑 Deposit addresses: ⚠️ {esc(hdwallet.problem())}")
     else:
