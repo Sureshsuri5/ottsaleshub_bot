@@ -149,6 +149,7 @@ USER_COMMANDS = [
     ("start", "Open the shop"),
     ("menu", "Main menu"),
     ("order", "Look up an order by its ID"),
+    ("orders", "Your past orders"),
 ]
 # Not published to Telegram — see _publish_commands(). Kept as the one place
 # that lists what an admin can type, so it doesn't drift out of the README.
@@ -163,6 +164,7 @@ ADMIN_COMMANDS = USER_COMMANDS + [
     ("wallet", "Which deposit accounts hold funds"),
     ("emojitest", "Check premium emoji against Telegram"),
     ("announcetest", "Check group announcement setup"),
+    ("user", "Look up a buyer by username or id"),
 ]
 
 

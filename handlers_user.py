@@ -1157,6 +1157,19 @@ async def withdraw_list(c: CallbackQuery):
     await c.answer()
 
 
+@router.message(Command("orders"))
+async def orders_cmd(m: Message, state: FSMContext):
+    """The same order history the profile links to, one command away.
+
+    Reuses the callback handler through FakeCb so the two can't drift: a
+    second implementation of this screen would be a second place to fix every
+    time the list changes.
+    """
+    await state.clear()
+    cb = FakeCb(m).model_copy(update={"data": "menu:orders"})
+    await my_orders(cb.as_(m.bot), state)
+
+
 @router.callback_query(F.data == "menu:orders")
 @router.callback_query(F.data.startswith("orders:"))
 async def my_orders(c: CallbackQuery, state: FSMContext):

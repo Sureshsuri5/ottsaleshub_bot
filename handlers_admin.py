@@ -1407,6 +1407,30 @@ async def users(c: CallbackQuery, state: FSMContext):
     await c.answer()
 
 
+@router.message(Command("user"))
+async def user_cmd(m: Message, state: FSMContext):
+    """Look a buyer up straight from the chat box.
+
+    Takes @username, a bare username, or a numeric id — the same three forms
+    the Find a user screen accepts, because whichever one you have to hand is
+    the one you'll type.
+    """
+    await state.clear()
+    term = (m.text or "").partition(" ")[2].strip()
+    if not term:
+        return await m.answer(
+            "Usage: <code>/user @name</code> or <code>/user 123456789</code>\n\n"
+            "Shows balance, orders, pricing tier and ban status, with the same "
+            "buttons as the Users screen.")
+    u = await db.find_user(term)
+    if not u:
+        return await m.answer(
+            f"No user matches <code>{esc(term)}</code>.\n\n"
+            "<i>Someone only appears here once they've opened the bot at "
+            "least once — a Telegram username alone isn't enough.</i>")
+    await m.answer(await _user_text(u), reply_markup=k.user_kb(u))
+
+
 @router.message(A.find_user)
 async def user_found(m: Message, state: FSMContext):
     u = await db.find_user(m.text)
