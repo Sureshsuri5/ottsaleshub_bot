@@ -160,6 +160,7 @@ ADMIN_COMMANDS = USER_COMMANDS + [
     ("backup", "Download a full database backup"),
     ("wallet", "Which deposit accounts hold funds"),
     ("emojitest", "Check premium emoji against Telegram"),
+    ("announcetest", "Check group announcement setup"),
 ]
 
 

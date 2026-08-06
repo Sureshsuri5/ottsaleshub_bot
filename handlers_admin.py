@@ -368,6 +368,53 @@ async def backup_cmd(m: Message, state: FSMContext):
         reply_markup=k.back())
 
 
+@router.message(Command("announcetest"))
+async def announce_test(m: Message, state: FSMContext):
+    """Report why announcements aren't arriving, then try one for real.
+
+    There are four independent reasons nothing shows up — no chat set, the
+    bot can't post there, the catalogue was recorded by the bootstrap pass, or
+    the product simply has no stock. Guessing between them from the outside is
+    slow; asking the bot is not.
+    """
+    await state.clear()
+    import delivery
+
+    chat = (await flair.restock_chat()).strip()
+    booted = await db.setting("restock:bootstrapped", "") == "1"
+    lines = ["📢 <b>Announcement check</b>\n",
+             f"Chat: {f'<code>{esc(chat)}</code>' if chat else '❌ <b>not set</b>'}",
+             f"First pass done: {'✅ yes' if booted else '⏳ not yet'}"]
+
+    if not chat:
+        lines.append("\nSet a group id in the Mini App panel → Settings → "
+                     "<i>Restock &amp; new product announcements</i>, or it "
+                     "falls back to the sales feed group.")
+        return await m.answer("\n".join(lines), reply_markup=k.back())
+
+    # per-product state, so a product that was swallowed by the bootstrap pass
+    # is visible rather than merely suspected
+    prods = await db.products(None, only_active=True)
+    lines.append(f"\n<b>{len(prods)} active product(s)</b>")
+    for p in prods[:15]:
+        avail = await db.available(p["id"])
+        seen = await db.setting(f"restock:instock:{p['id']}", "—")
+        isnew = await db.setting(f"restock:new:{p['id']}", "") == "1"
+        state_txt = ("announced" if isnew else "would announce as NEW")
+        lines.append(f"· {esc(p['name'])} — stock {avail}, "
+                     f"last seen '{seen}', {state_txt}")
+
+    try:
+        await m.bot.send_message(chat, "📢 Announcement test — this group is "
+                                       "configured correctly.")
+        lines.append("\n✅ Test message posted to the group.")
+    except Exception as e:
+        lines.append(f"\n❌ Could not post there:\n<code>{esc(str(e)[:300])}</code>"
+                     "\n\nAdd the bot to that group and allow it to send messages. "
+                     "For a channel it must be an admin.")
+    await m.answer("\n".join(lines), reply_markup=k.back())
+
+
 @router.message(Command("emojitest"))
 async def emoji_test(m: Message, state: FSMContext):
     """Send one custom emoji and report exactly what Telegram says.
