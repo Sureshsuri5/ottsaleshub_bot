@@ -376,11 +376,31 @@ async def emoji_test(m: Message, state: FSMContext):
     custom emoji, the message still sends and the reader just sees the plain
     fallback — nothing is logged and nothing looks wrong. Asking Telegram
     directly is the only way to tell "not allowed" from "not configured".
+
+    With an argument it lists what is actually stored for the matching
+    section — the only reliable way to tell a saved icon from one that looks
+    saved in the panel.
     """
     await state.clear()
     import flair as fl
 
+    arg = (m.text or "").partition(" ")[2].strip().lower()
     ids = await fl.slot_ids()
+
+    if arg:
+        rows = [(s, fl.slot_section(s)) for s in fl.SLOTS
+                if arg in fl.slot_section(s).lower() or arg in s.lower()]
+        if not rows:
+            return await m.answer(f"No slots match <code>{esc(arg)}</code>.")
+        out = [f"🎨 <b>Stored icons — {esc(rows[0][1])}</b>\n"]
+        for slot, _ in rows:
+            eid = ids.get(slot)
+            out.append(f"{'✨' if eid else '·'} <code>{esc(slot)}</code>"
+                       + (f" → <code>{esc(eid)}</code>" if eid else " — <i>not set</i>"))
+        out.append(f"\n<i>{sum(1 for s, _ in rows if ids.get(s))} of {len(rows)} set. "
+                   f"{len(ids)} across the whole bot.</i>")
+        return await m.answer("\n".join(out), reply_markup=k.back())
+
     if not ids:
         return await m.answer(
             "No custom emoji are saved.\n\n"
@@ -392,7 +412,8 @@ async def emoji_test(m: Message, state: FSMContext):
     lines = [f"🧪 <b>Premium emoji test</b>\n",
              f"Slot: <code>{esc(slot)}</code>",
              f"Emoji id: <code>{esc(eid)}</code>",
-             f"State: {fl.custom_state()}\n"]
+             f"State: {fl.custom_state()}",
+             f"Slots with an icon: <b>{len(ids)}</b> of {len(fl.SLOTS)}\n"]
     try:
         sent = await m.bot.send_message(
             m.chat.id, f'<tg-emoji emoji-id="{eid}">{plain}</tg-emoji> test')
@@ -401,15 +422,14 @@ async def emoji_test(m: Message, state: FSMContext):
         # "succeeded" and the buyer still sees a plain emoji.
         kinds = [e.type for e in (sent.entities or [])]
         if "custom_emoji" in kinds:
-            lines.append("✅ Telegram accepted it. Premium emoji are working — "
-                         "if a screen still looks plain, that slot has no id set.")
+            lines.append("✅ Telegram accepted it. Premium emoji are working.\n\n"
+                         "If a screen still looks plain, its slots have no id. "
+                         "Check with <code>/emojitest refer</code>.")
         else:
             lines.append(
                 "⚠️ Telegram accepted the message but <b>removed the emoji</b>.\n\n"
                 "This bot isn't permitted to use custom emoji. A bot may only "
-                "use them if it has a username bought on Fragment. There is no "
-                "setting that changes this — the plain fallback is what buyers "
-                "will see.")
+                "use them if it has a username bought on Fragment.")
     except Exception as e:
         lines.append(f"❌ Telegram rejected it:\n<code>{esc(str(e)[:400])}</code>")
     await m.answer("\n".join(lines), reply_markup=k.back())
