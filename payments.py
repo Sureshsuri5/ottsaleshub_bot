@@ -1160,6 +1160,15 @@ RAIL_ACCOUNTS: dict[str, str] = {}      # code -> account id, filled from settin
 # same way account details are, so enabled() can stay synchronous — it is
 # called on every checkout screen and making it async would ripple everywhere.
 DISABLED: set[str] = set()
+# Some rails make sense for only one half of the shop — UPI can be fine for
+# topping up a wallet while being a nuisance on individual purchases, or the
+# reverse. These narrow the master switch; they never widen it.
+DISABLED_TOPUP: set[str] = set()
+DISABLED_PURCHASE: set[str] = set()
+
+
+def _codes(raw: str) -> set[str]:
+    return {c for c in (x.strip() for x in (raw or "").split(",")) if c}
 
 
 async def reload_rails() -> None:
@@ -1169,9 +1178,11 @@ async def reload_rails() -> None:
         if v:
             RAIL_ACCOUNTS[code] = v
 
-    DISABLED.clear()
-    off = (await db.setting("rails:disabled", "")).strip()
-    DISABLED.update(c for c in (x.strip() for x in off.split(",")) if c)
+    for target, key in ((DISABLED, "rails:disabled"),
+                        (DISABLED_TOPUP, "rails:disabled_topup"),
+                        (DISABLED_PURCHASE, "rails:disabled_purchase")):
+        target.clear()
+        target.update(_codes(await db.setting(key, "")))
 
 
 BINANCE_API = "https://api.binance.com"
@@ -1419,10 +1430,10 @@ def deposit_rails() -> list:
     return [p for p in enabled() if p.code != "balance"]
 
 
-def groups() -> dict[str, list]:
+def groups(kind: str | None = None) -> dict[str, list]:
     """Enabled providers bucketed by menu group, preserving configured order."""
     out: dict[str, list] = {}
-    for p in enabled():
+    for p in enabled(kind):
         out.setdefault(getattr(p, "group", "wallet"), []).append(p)
     return out
 
@@ -1443,22 +1454,35 @@ def _ready(code: str) -> bool:
     return bool(needs.get(code, True))
 
 
-def enabled() -> list:
+def enabled(kind: str | None = None) -> list:
     """Rails offered at checkout.
+
+    `kind` is "topup", "purchase", or None for "anywhere". A rail switched off
+    by the master toggle is gone from both; the per-context switches remove it
+    from one side only.
 
     Wallet balance is always included: it isn't a payment rail you switch on,
     it's where deposits land. Leaving it out of ENABLED_PROVIDERS would let
     people fund a wallet they could never spend.
     """
+    narrow = {"topup": DISABLED_TOPUP, "purchase": DISABLED_PURCHASE}.get(kind, set())
     codes = list(cfg.providers)
     if "balance" not in codes:
         codes.insert(0, "balance")
-    # A rail switched off in the panel is hidden from buyers and never polled.
-    # Balance is exempt: it is where deposits land, and turning it off would
-    # strand every wallet in the shop.
     return [REGISTRY[c] for c in codes
             if c in REGISTRY and _ready(c)
-            and (c == "balance" or c not in DISABLED)]
+            and (c == "balance" or (c not in DISABLED and c not in narrow))]
+
+
+def pollable() -> list:
+    """Every configured rail, whatever the toggles say.
+
+    The watcher uses this rather than enabled(): an order placed before a rail
+    was switched off still has a buyer waiting on it, and money already sent
+    on-chain has to be confirmed and delivered regardless of what the shop is
+    currently advertising.
+    """
+    return [REGISTRY[c] for c in cfg.providers if c in REGISTRY and _ready(c)]
 
 
 def misconfigured() -> list[str]:

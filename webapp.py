@@ -672,10 +672,15 @@ async def adm_flair(request):
             return web.json_response({"ok": True})
         if "maintenance" in d:
             await db.set_setting("maintenance", "1" if d["maintenance"] else "0")
-        if "rails_disabled" in d:
-            off = [str(c).strip() for c in (d["rails_disabled"] or [])
-                   if str(c).strip() and str(c).strip() != "balance"]
-            await db.set_setting("rails:disabled", ",".join(off))
+        for field, key in (("rails_disabled", "rails:disabled"),
+                           ("rails_off_topup", "rails:disabled_topup"),
+                           ("rails_off_purchase", "rails:disabled_purchase")):
+            if field in d:
+                off = [str(c).strip() for c in (d[field] or [])
+                       if str(c).strip() and str(c).strip() != "balance"]
+                await db.set_setting(key, ",".join(off))
+        if any(f in d for f in ("rails_disabled", "rails_off_topup",
+                                "rails_off_purchase")):
             await payments.reload_rails()
         for key in ("sales_chat", "restock_chat", "hide_amount",
                     "sale_template", "sale_button"):
@@ -695,8 +700,14 @@ async def adm_flair(request):
         # every rail the shop could offer, with whether it's currently on and
         # whether it's actually configured — a rail can be "on" and still
         # hidden because it has no address set
+        # split=True marks rails that also get per-context switches. Only the
+        # manual, region-specific ones need them; a crypto rail is either
+        # accepted or it isn't.
         "rails": [{"code": p.code, "title": p.title,
                    "on": p.code not in payments.DISABLED,
+                   "topup": p.code not in payments.DISABLED_TOPUP,
+                   "purchase": p.code not in payments.DISABLED_PURCHASE,
+                   "split": p.code in payments.MANUAL_RAILS or p.code == "upi",
                    "ready": payments._ready(p.code)}
                   for p in (payments.REGISTRY[c] for c in cfg.providers
                             if c in payments.REGISTRY)],

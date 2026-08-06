@@ -552,7 +552,18 @@ function moreView() {
             <span>${esc(r.title)}${r.ready ? '' : ' <i class="muted">— not configured</i>'}</span>
             <input type="checkbox" class="rail" data-code="${esc(r.code)}"
                    ${r.on ? 'checked' : ''}>
-          </label>`).join('')}
+          </label>
+          ${r.split ? `
+          <label class="row" style="justify-content:space-between;padding-left:18px">
+            <span class="muted small">— deposits</span>
+            <input type="checkbox" class="rail-topup" data-code="${esc(r.code)}"
+                   ${r.topup ? 'checked' : ''}>
+          </label>
+          <label class="row" style="justify-content:space-between;padding-left:18px">
+            <span class="muted small">— purchases</span>
+            <input type="checkbox" class="rail-buy" data-code="${esc(r.code)}"
+                   ${r.purchase ? 'checked' : ''}>
+          </label>` : ''}`).join('')}
       </div>
 
       <label>Group or channel id</label>
@@ -672,10 +683,12 @@ function moreView() {
         });
     });
     const flairBody = () => {
-      const off = [...view.querySelectorAll('.rail')]
+      const unchecked = (sel) => [...view.querySelectorAll(sel)]
         .filter((i) => !i.checked).map((i) => i.dataset.code);
       const out = { maintenance: view.querySelector('#maint').checked,
-                    rails_disabled: off,
+                    rails_disabled: unchecked('.rail'),
+                    rails_off_topup: unchecked('.rail-topup'),
+                    rails_off_purchase: unchecked('.rail-buy'),
                     sales_chat: view.querySelector('#feed').value.trim(),
                     restock_chat: view.querySelector('#restock').value.trim(),
                     sale_template: view.querySelector('#tpl').value.trim() };

@@ -262,7 +262,7 @@ def providers_kb(pid: int, qty: int, kind: str = "purchase",
     a single option is just an extra tap.
     """
     rows = []
-    for name, provs in payments.groups().items():
+    for name, provs in payments.groups(kind).items():
         provs = [p for p in provs if not (kind == "topup" and p.code == "balance")]
         if not provs:
             continue

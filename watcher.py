@@ -89,7 +89,7 @@ async def _tick(bot: Bot) -> None:
             log.exception("poll failed for rail '%s'", prov.code)
         return []
 
-    rails = payments.enabled()
+    rails = payments.pollable()
     results = await asyncio.gather(*(_poll_one(p) for p in rails))
 
     # Settle in sequence: delivery allocates stock, and serialising it here
