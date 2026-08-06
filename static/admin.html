@@ -541,6 +541,14 @@ function moreView() {
         <input type="checkbox" id="maint" ${f.maintenance ? 'checked' : ''}>
       </label>
 
+      <label class="row" style="justify-content:space-between">
+        <span><b>Mini App</b><br>
+          <i class="muted">Off hides the Open Mini App button and closes the
+          storefront. The bot's chat menus keep working. This panel is
+          unaffected.</i></span>
+        <input type="checkbox" id="miniapp" ${f.miniapp_enabled ? 'checked' : ''}>
+      </label>
+
       <label>Payment methods</label>
       <p class="sub" style="margin-top:0">Switch a rail off to hide it from
         buyers and stop polling it. Wallet balance can't be switched off —
@@ -685,7 +693,8 @@ function moreView() {
     const flairBody = () => {
       const unchecked = (sel) => [...view.querySelectorAll(sel)]
         .filter((i) => !i.checked).map((i) => i.dataset.code);
-      const out = { maintenance: view.querySelector('#maint').checked,
+      const out = { miniapp_enabled: view.querySelector('#miniapp').checked,
+                    maintenance: view.querySelector('#maint').checked,
                     rails_disabled: unchecked('.rail'),
                     rails_off_topup: unchecked('.rail-topup'),
                     rails_off_purchase: unchecked('.rail-buy'),

@@ -67,7 +67,9 @@ def main_menu(is_admin: bool = False) -> InlineKeyboardMarkup:
     Each button reads its icon from its own flair slot."""
     L = flair.label
     rows = []
-    if cfg.miniapps_live:
+    # Hidden when switched off in the panel — a button that opens a storefront
+    # telling the buyer it's closed is worse than no button.
+    if cfg.miniapps_live and flair.MINIAPP_ON:
         rows.append([app_btn(L("menu_app", "Open Mini App"), "/", style=None,
                              icon_slot="menu_app")])
     rows.append([btn(L("menu_shop", "Shop"), "shop", style="primary", icon_slot="menu_shop")])

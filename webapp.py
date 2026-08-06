@@ -670,6 +670,9 @@ async def adm_flair(request):
             await db.set_setting("flair:sales_chat", chat)
             await flair.announce_sale(request.app["bot"], fake, None)
             return web.json_response({"ok": True})
+        if "miniapp_enabled" in d:
+            await db.set_setting("miniapp_enabled",
+                                 "1" if d["miniapp_enabled"] else "0")
         if "maintenance" in d:
             await db.set_setting("maintenance", "1" if d["maintenance"] else "0")
         for field, key in (("rails_disabled", "rails:disabled"),
@@ -697,6 +700,7 @@ async def adm_flair(request):
         "sales_chat": await db.setting("flair:sales_chat", ""),
         "restock_chat": await db.setting("flair:restock_chat", ""),
         "maintenance": await db.setting("maintenance", "0") == "1",
+        "miniapp_enabled": await db.setting("miniapp_enabled", "1") != "0",
         # every rail the shop could offer, with whether it's currently on and
         # whether it's actually configured — a rail can be "on" and still
         # hidden because it has no address set
@@ -858,12 +862,18 @@ async def maintenance_gate(request, handler):
     if request.path.startswith(("/api/admin", "/health", "/build", "/tg/")) \
             or request.method == "GET" and not request.path.startswith("/api/"):
         return await handler(request)
-    if await db.setting("maintenance", "0") == "1" \
-            and not cfg.is_admin(request.get("uid") or 0):
+    admin = cfg.is_admin(request.get("uid") or 0)
+    if await db.setting("maintenance", "0") == "1" and not admin:
         import texts
         return web.json_response(
             {"error": await texts.t("maintenance"), "maintenance": True},
             status=503)
+    # Hiding the menu button alone isn't enough — anyone with the URL, or an
+    # old chat message containing it, could still open the storefront.
+    if await db.setting("miniapp_enabled", "1") == "0" and not admin:
+        return web.json_response(
+            {"error": "The web shop is closed right now. Use the bot in "
+                      "Telegram instead.", "miniapp_off": True}, status=503)
     return await handler(request)
 
 

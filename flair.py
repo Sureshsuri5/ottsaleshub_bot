@@ -94,10 +94,18 @@ def strip_custom(text: str) -> str:
     return CUSTOM_TAG.sub(r"\1", text)
 
 
+# Whether buyers are offered the Mini App at all. Cached alongside the icons
+# so keyboards can stay synchronous; refreshed at startup and whenever the
+# admin panel saves.
+MINIAPP_ON = True
+
+
 async def reload() -> None:
     """Refresh the sync icon cache from the settings table."""
+    global MINIAPP_ON
     ICONS.clear()
     ICONS.update(await slot_ids())
+    MINIAPP_ON = await db.setting("miniapp_enabled", "1") != "0"
 
 # slot -> plain Unicode fallback. A custom emoji id can be attached to any slot
 # from the admin panel; until then the fallback is used.
