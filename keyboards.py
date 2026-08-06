@@ -134,9 +134,12 @@ def refer_kb(link: str, can_transfer: bool) -> InlineKeyboardMarkup:
     ]
     # both states use the same slot — the disabled variant is still the same
     # button to the buyer, it just isn't tappable yet
+    # Always green. It used to grey out with nothing to transfer, which read as
+    # broken rather than empty — the callback still answers "nothing to
+    # transfer yet", so the state is explained in words instead of colour.
     rows.append([btn(flair.label("r_transfer", "Transfer to Wallet"),
                      "refer:transfer" if can_transfer else "refer:none",
-                     style="success" if can_transfer else None,
+                     style="success",
                      icon_slot="r_transfer")])
     rows.append([back_btn("Back", "home")])
     return kb(*rows)
