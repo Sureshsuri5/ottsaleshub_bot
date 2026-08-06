@@ -475,7 +475,7 @@ def admin_prod_kb(p) -> InlineKeyboardMarkup:
          btn("💲 Tier prices", f"a:tprice:{p['id']}")],
         [btn("🔎 Group keywords", f"a:kw:{p['id']}")],
         [btn("➕ Add stock", f"a:stockadd:{p['id']}", style="success", icon_slot="box"),
-         btn("📋 Export stock", f"a:stockview:{p['id']}")],
+         btn("📋 View stock", f"a:stockview:{p['id']}")],
         [btn("♾ Unlimited mode", f"a:infinite:{p['id']}"),
          btn("🧹 Purge sold", f"a:purge:{p['id']}")],
         [btn("🗑 Delete product", f"a:proddel:{p['id']}", style="danger")],
@@ -492,6 +492,34 @@ def review_kb(oid: int) -> InlineKeyboardMarkup:
                btn("❌ Reject", f"a:no:{oid}", style="danger")])
 
 
+USERS_PAGE = 8
+
+
+def users_list_kb(rows, page: int, total: int) -> InlineKeyboardMarkup:
+    """Everyone who has opened the bot, newest first.
+
+    Search is still there, but it is no longer the only way in — with a couple
+    of hundred buyers you mostly want to see who they are, not recall a
+    username you never knew.
+    """
+    out = []
+    for u in rows:
+        who = u["username"] and f"@{u['username']}" or (u["first_name"] or u["tg_id"])
+        mark = "🚫 " if u["is_banned"] else ""
+        out.append([btn(f"{mark}{who} · {cfg.money(u['balance'])}",
+                        f"a:user:{u['tg_id']}")])
+    nav = []
+    if page > 0:
+        nav.append(btn("◀️ Prev", f"a:userpage:{page - 1}", style="primary"))
+    if (page + 1) * USERS_PAGE < total:
+        nav.append(btn("Next ▶️", f"a:userpage:{page + 1}", style="primary"))
+    if nav:
+        out.append(nav)
+    out.append([btn("🔍 Search", "a:usersearch")])
+    out.append([back_btn("Panel", "a:home")])
+    return kb(*out)
+
+
 def user_kb(u) -> InlineKeyboardMarkup:
     return kb(
         [btn("➕ Add balance", f"a:bal:{u['tg_id']}:add", style="success", icon_slot="money"),
@@ -500,7 +528,8 @@ def user_kb(u) -> InlineKeyboardMarkup:
              style=None if u["is_banned"] else "danger")],
         [btn("🧾 Orders", f"a:uorders:{u['tg_id']}"),
          btn("🏷 Pricing", f"a:utier:{u['tg_id']}")],
-        [btn("🔍 Find another", "a:users"), back_btn("Panel", "a:home")],
+        [btn("👥 All users", "a:users"), btn("🔍 Search", "a:usersearch")],
+        [back_btn("Panel", "a:home")],
     )
 
 

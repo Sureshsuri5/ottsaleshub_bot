@@ -1380,15 +1380,35 @@ async def stock_text(m: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("a:stockview:"))
 async def stock_view(c: CallbackQuery):
+    """Unsold stock, on screen where it's short and as a file where it isn't.
+
+    This used to always answer with a document. Checking whether three keys are
+    left shouldn't mean downloading and opening a file — but a thousand of them
+    won't fit in a message either, so the shape of the answer follows the size.
+    """
     pid = int(c.data.split(":")[2])
+    p = await db.product(pid)
     rows = await db.q(
         "SELECT payload FROM stock WHERE product_id = ? AND is_sold = 0 ORDER BY id", (pid,))
+    sold = await db.q1(
+        "SELECT COUNT(*) c FROM stock WHERE product_id = ? AND is_sold = 1", (pid,))
     if not rows:
-        return await c.answer("No unsold stock.", show_alert=True)
+        return await c.answer(
+            "No unsold stock." + (f" {sold['c']} sold." if sold and sold["c"] else ""),
+            show_alert=True)
+
+    head = (f"📦 <b>{esc(p['name'] if p else pid)}</b>\n"
+            f"{len(rows)} unsold · {sold['c'] if sold else 0} sold\n")
     body = "\n".join(r["payload"] for r in rows)
+
+    if len(rows) <= 30 and len(body) < 3000:
+        listing = "\n".join(f"{i}. <code>{esc(r['payload'])}</code>"
+                            for i, r in enumerate(rows, 1))
+        return await _show(c, f"{head}\n{listing}", k.back(f"a:prod:{pid}"))
+
     await c.message.answer_document(
         BufferedInputFile(body.encode(), filename=f"stock_{pid}.txt"),
-        caption=f"{len(rows)} unsold item(s).",
+        caption=f"{head}\n<i>Too long to show here — attached instead.</i>",
         reply_markup=k.back(f"a:prod:{pid}"))
     await c.answer()
 
@@ -1401,9 +1421,44 @@ async def purge(c: CallbackQuery):
 
 # ------------------------------------------------------------------ users
 @router.callback_query(F.data == "a:users")
+@router.callback_query(F.data.startswith("a:userpage:"))
 async def users(c: CallbackQuery, state: FSMContext):
+    """The Users screen now opens on the list rather than a prompt.
+
+    Asking for a username first assumed you already knew who you were looking
+    for. Most of the time the question is "who are my buyers" — and a shop with
+    twenty of them shouldn't need to guess a name to see any of them.
+    """
+    await state.clear()
+    page = int(c.data.split(":")[2]) if c.data.startswith("a:userpage:") else 0
+    total = await db.count_users()
+    if not total:
+        return await _show(c, "👤 <b>Users</b>\n\nNobody has opened the bot yet.",
+                           k.back("a:home"))
+    rows = await db.list_users("", k.USERS_PAGE, page * k.USERS_PAGE)
+    pages = (total + k.USERS_PAGE - 1) // k.USERS_PAGE
+    await _show(c, f"👤 <b>Users</b> — {total} total"
+                   f"{f' · page {page + 1}/{pages}' if pages > 1 else ''}\n\n"
+                   "<i>Newest first. Tap anyone to manage them.</i>",
+                k.users_list_kb(rows, page, total))
+    await c.answer()
+
+
+@router.callback_query(F.data == "a:usersearch")
+async def users_search(c: CallbackQuery, state: FSMContext):
     await state.set_state(A.find_user)
-    await _show(c, "👤 <b>Find a user</b>\n\nSend a numeric ID or @username:", _cancel_kb())
+    await _show(c, "🔍 <b>Find a user</b>\n\nSend a numeric ID or @username:",
+                _cancel_kb())
+    await c.answer()
+
+
+@router.callback_query(F.data.startswith("a:user:"))
+async def user_open(c: CallbackQuery, state: FSMContext):
+    await state.clear()
+    u = await db.get_user(int(c.data.split(":")[2]))
+    if not u:
+        return await c.answer("That user is gone.", show_alert=True)
+    await _show(c, await _user_text(u), k.user_kb(u))
     await c.answer()
 
 

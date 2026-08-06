@@ -1130,10 +1130,16 @@ async def list_orders(status: str | None = None, limit: int = 50, offset: int = 
     return await q(sql, (*args, limit, offset))
 
 
-async def list_users(term: str = "", limit: int = 50):
+async def count_users() -> int:
+    row = await q1("SELECT COUNT(*) c FROM users")
+    return int(row["c"]) if row else 0
+
+
+async def list_users(term: str = "", limit: int = 50, offset: int = 0):
     term = (term or "").strip().lstrip("@")
     if not term:
-        return await q("SELECT * FROM users ORDER BY created_at DESC LIMIT ?", (limit,))
+        return await q("SELECT * FROM users ORDER BY created_at DESC "
+                       "LIMIT ? OFFSET ?", (limit, offset))
     if term.isdigit():
         return await q("SELECT * FROM users WHERE CAST(tg_id AS TEXT) LIKE ? LIMIT ?",
                        (f"%{term}%", limit))
