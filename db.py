@@ -338,6 +338,8 @@ async def _migrate() -> None:
         "ALTER TABLE users ADD COLUMN notify_promos INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE users ADD COLUMN notify_stock INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE users ADD COLUMN notify_referral INTEGER NOT NULL DEFAULT 1",
+        # which version of the terms this buyer accepted, empty until they do
+        "ALTER TABLE users ADD COLUMN terms_version TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE users ADD COLUMN api_key TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE users ADD COLUMN ref_available REAL NOT NULL DEFAULT 0",
         "ALTER TABLE users ADD COLUMN ref_transferred REAL NOT NULL DEFAULT 0",
@@ -569,6 +571,10 @@ async def all_user_ids(promos_only: bool = False) -> list[int]:
 
 async def activate(tg_id: int) -> None:
     await ex("UPDATE users SET activated = 1 WHERE tg_id = ?", (tg_id,))
+
+
+async def set_terms_version(uid: int, version: str) -> None:
+    await ex("UPDATE users SET terms_version = ? WHERE tg_id = ?", (version, uid))
 
 
 async def set_notify(tg_id: int, field: str, on: bool) -> None:

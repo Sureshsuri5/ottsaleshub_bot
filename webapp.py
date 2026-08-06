@@ -227,6 +227,7 @@ async def api_me(request):
         "admin": request["admin"], "shop": cfg.shop_name, "currency": cfg.fiat,
         "symbol": cfg.symbol, "decimals": cfg.decimals, "support": cfg.support_url,
         "notify_orders": bool(u["notify_orders"]),
+        "terms": await terms_state(request["uid"]),
         "tier": await pricing.label(request["uid"]),
         "providers": [{"code": p.code, "title": p.title} for p in payments.enabled()],
         "hero": hero,
@@ -234,6 +235,36 @@ async def api_me(request):
         "stats": {"products": s["products"], "delivered": s["orders"],
                   "stock": s["in_stock"], "users": s["users"]},
     })
+
+
+async def terms_state(uid: int | None) -> dict:
+    """Terms text and whether this buyer still has to accept it.
+
+    The version is a hash of the text itself rather than a number an admin has
+    to remember to bump — edit the terms in /texts and everyone is asked again,
+    which is the only behaviour that makes the acceptance mean anything.
+    """
+    body = await texts.t("terms_body")
+    version = hashlib.sha1(body.encode()).hexdigest()[:12]
+    accepted = ""
+    if uid:
+        u = await db.get_user(uid)
+        accepted = (u["terms_version"] if u else "") or ""
+    return {"text": body, "version": version, "accepted": accepted == version}
+
+
+async def api_terms_accept(request):
+    """Record acceptance of the exact text the buyer was shown."""
+    if request["uid"] is None:
+        return web.json_response({"error": "not signed in"}, status=401)
+    d = await request.json()
+    state = await terms_state(request["uid"])
+    # Compare against the current text: a stale tab could otherwise accept a
+    # version that has since been replaced.
+    if d.get("version") != state["version"]:
+        return web.json_response({"error": "terms changed", **state}, status=409)
+    await db.set_terms_version(request["uid"], state["version"])
+    return web.json_response({"ok": True})
 
 
 async def api_activate(request):
@@ -878,6 +909,7 @@ def build_app(bot: Bot) -> web.Application:
     r.add_post("/api/admin/order/{oid}/{action}", adm_order_action)
     r.add_get("/api/admin/withdrawals", adm_withdrawals)
     r.add_post("/api/admin/withdrawals", adm_withdrawals)
+    r.add_post("/api/terms", api_terms_accept)
     r.add_get("/api/admin/users", adm_users)
     r.add_post("/api/admin/user/{uid}", adm_user_action)
     r.add_post("/api/admin/broadcast", adm_broadcast)

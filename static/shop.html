@@ -83,6 +83,7 @@ async function init() {
   try {
     me = await api('/me');
     setCurrency({ symbol: me.symbol, rate: 1, decimals: me.decimals ?? 2 });
+    if (!(await ensureTerms())) return;
     shopView();
   } catch (e) {
     const browser = !inTelegram();
@@ -145,6 +146,7 @@ async function shopView() {
     catalog = await api('/catalog');
     const items = catalog.flatMap((c) => c.products);
     const ready = items.filter((p) => p.infinite || p.stock).length;
+    const onSale = items.filter((p) => p.list_price > p.price).length;
     const h = me.hero || {};
     const st = me.stats || {};
     const shown = query
@@ -171,22 +173,26 @@ async function shopView() {
       </section>
 
       <div class="statgrid">
-        <div class="card"><div class="num">${st.products ?? items.length}</div>
-          <div class="tiny muted">Products</div></div>
-        <div class="card"><div class="num">${st.stock ?? 0}</div>
-          <div class="tiny muted">In stock</div></div>
-        <div class="card"><div class="num">${st.delivered ?? 0}</div>
-          <div class="tiny muted">Delivered</div></div>
-        <div class="card"><div class="num">24/7</div>
-          <div class="tiny muted">Support</div></div>
+        <div class="card"><span class="ico">📦</span>
+          <div class="n">${st.products ?? items.length}</div>
+          <div class="l">Products</div></div>
+        <div class="card"><span class="ico">📈</span>
+          <div class="n">${st.stock ?? 0}</div>
+          <div class="l">In stock</div></div>
+        <div class="card"><span class="ico">⚡</span>
+          <div class="n">${onSale}</div>
+          <div class="l">Flash sales</div></div>
+        <div class="card"><span class="ico">🛡</span>
+          <div class="n">24/7</div>
+          <div class="l">Auto delivery</div></div>
       </div>
 
       <div class="sectionhead" id="catalogue">
-        <h2>Products</h2>
-        <span class="tiny muted">${ready} of ${items.length} available</span>
+        <h2>All Products</h2>
       </div>
-      ${items.length > 6 ? `<input class="search" id="q" placeholder="Search products"
-        value="${esc(query)}">` : ''}
+      <p class="sub tight">Browse the full catalog and check out in seconds.</p>
+      <input class="search" id="q" placeholder="Search products…"
+        value="${esc(query)}">
       ${shown.length
         ? `<div class="grid">${shown.map(productCard).join('')}</div>`
         : `<div class="empty"><b>Nothing found</b>Try a different search.</div>`}
@@ -374,6 +380,48 @@ function payable(p) {
   const c = me.currencies?.[curIndex];
   const viewingINR = (c?.code || me.currency || '').toUpperCase() === 'INR';
   return INR_ONLY.includes(p.code) ? viewingINR : !viewingINR;
+}
+
+/* Terms gate. Shown once per version of the text — editing the terms in /texts
+   changes the hash and everyone is asked again, which is the only thing that
+   makes an acceptance record mean anything.
+
+   Blocking rather than dismissible: a buyer who scrolls past this and then
+   disputes a delivered order has a much better argument if the shop let them
+   through without answering. Returns false if the gate is still up. */
+async function ensureTerms() {
+  const t = me.terms;
+  if (!t || t.accepted) return true;
+  return new Promise((resolve) => {
+    html(`<div class="card terms">
+      <h2>Terms &amp; Conditions</h2>
+      <div class="terms-body">${t.text.replace(/\n/g, '<br>')}</div>
+      <button class="btn primary wide" id="agree">I Agree</button>
+      <button class="btn wide" id="decline">Decline</button>
+    </div>`);
+    view.querySelector('#agree').onclick = async () => {
+      haptic();
+      try {
+        await api('/terms', { method: 'POST', body: { version: t.version } });
+        me.terms.accepted = true;
+        resolve(true);
+        shopView();
+      } catch (e) {
+        // The text changed under them — show the new one rather than accept
+        // something they were never given the chance to read.
+        me = await api('/me');
+        resolve(false);
+        ensureTerms().then((ok) => ok && shopView());
+      }
+    };
+    view.querySelector('#decline').onclick = () => {
+      haptic();
+      html(`<div class="empty"><b>Terms not accepted</b>
+        You need to accept the terms before using the shop.
+        <br><br>Reopen the app to read them again.</div>`);
+      resolve(false);
+    };
+  });
 }
 
 /* -------------------------------------------------------------- checkout */

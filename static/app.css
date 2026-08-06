@@ -228,15 +228,22 @@ body.store h1, body.store h2, body.store .display {
 }
 .trust span { display: inline-flex; align-items: center; gap: 6px; }
 
-.statgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
-.statgrid .card { padding: 13px 10px; margin: 0; text-align: center; }
+/* Two across, left aligned: four thin columns squeeze a five-digit stock
+   count onto two lines on a phone, which is where this is read. */
+.statgrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 12px; }
+.statgrid .card { padding: 14px; margin: 0; text-align: left; }
+.statgrid .ico {
+  display: flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; margin-bottom: 10px; font-size: 16px;
+  border-radius: 10px; background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
 .statgrid .n {
   font-family: var(--mono); font-variant-numeric: tabular-nums;
-  font-size: 19px; font-weight: 700; letter-spacing: -.02em;
+  font-size: 22px; font-weight: 700; letter-spacing: -.02em;
 }
 .statgrid .l { font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
                color: var(--muted); margin-top: 3px; }
-@media (max-width: 430px) { .statgrid { grid-template-columns: repeat(2, 1fr); } }
+.sub.tight { margin: -4px 0 12px; font-size: 13.5px; color: var(--muted); }
 
 .sectionhead { display: flex; align-items: baseline; justify-content: space-between;
                margin: 26px 0 10px; }
@@ -301,15 +308,12 @@ body.store h1, body.store h2, body.store .display {
 }
 .trustrow { gap: 14px; margin-top: 16px; flex-wrap: wrap; }
 .trustrow span { font-size: 12px; color: var(--muted); }
-.statgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 20px; }
-.statgrid .card { padding: 12px 8px; text-align: center; }
-.statgrid .num { font-size: 20px; font-weight: 700; letter-spacing: -.02em; }
+.statgrid { margin-bottom: 20px; }
 .sectionhead { display: flex; align-items: baseline; justify-content: space-between; margin: 6px 0 10px; }
 .grow { flex: 1; }
 img.brandmark { object-fit: cover; }
 @media (max-width: 420px) {
   .hero h1 { font-size: 28px; }
-  .statgrid { grid-template-columns: repeat(2, 1fr); }
 }
 
 /* delivered screen */
@@ -325,3 +329,13 @@ img.brandmark { object-fit: cover; }
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .keyrow .mini { flex: none; }
+
+
+/* --- terms gate --- */
+.terms { max-width: 34rem; margin: 1rem auto; }
+.terms h2 { margin: 0 0 .75rem; font-size: 1.15rem; }
+.terms-body {
+  max-height: 55vh; overflow-y: auto; margin-bottom: 1rem;
+  font-size: .93rem; line-height: 1.55; opacity: .9;
+}
+.btn.wide { width: 100%; margin-top: .5rem; }

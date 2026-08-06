@@ -99,6 +99,17 @@ MESSAGES: dict[str, Msg] = {
         "<i>You asked to be told. Stock goes fast — first come, first served.</i>",
         "Back-in-stock alert", "Shop",
         ("product", "emoji", "stock", "price")),
+    "terms_body": Msg(
+        "By using this shop you agree to the following:\n\n"
+        "• All sales are final. Digital goods cannot be returned once delivered.\n"
+        "• Replacements are provided only for items that arrive faulty, and only "
+        "within the warranty stated on the product.\n"
+        "• Do not share, resell or publish delivered credentials.\n"
+        "• One account per person. Abuse or chargebacks lead to a ban.\n"
+        "• Payments are irreversible. Send the exact amount on the correct "
+        "network — funds sent to the wrong network cannot be recovered.\n\n"
+        "Contact support before ordering if anything here is unclear.",
+        "Terms &amp; conditions (Mini App)", "Shop", ()),
     "pay_rest": Msg(
         "{{m_warn}} Pay the remaining amount via:",
         "Prompt when wallet covers part of an order", "Checkout", ()),
