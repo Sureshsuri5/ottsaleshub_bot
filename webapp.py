@@ -167,7 +167,7 @@ HERO_DEFAULTS = {
     "hero_title": "Premium digital products,",
     "hero_accent": "delivered instantly.",
     "hero_sub": ("Top up your balance once and unlock fast, automated delivery on every "
-                 "purchase. Secure payments, live stock, and round-the-clock support — "
+                 "purchase. Secure payments, live stock, and 24/7 support — "
                  "all in one place."),
 }
 
