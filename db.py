@@ -1113,10 +1113,13 @@ async def set_setting(key: str, value: str) -> None:
 # ----------------------------------------------------------------- stats
 async def alert_counts() -> dict:
     """Things waiting on an admin right now."""
-    r = await q1("SELECT COUNT(*) c, COALESCE(SUM(amount),0) s FROM withdrawals "
-                 "WHERE status = 'pending'")
-    v = await q1("SELECT COUNT(*) c FROM orders WHERE status = 'awaiting_review'")
-    return {"withdrawals": r["c"], "withdraw_total": r["s"], "reviews": v["c"]}
+    r = await q1(
+        "SELECT "
+        "(SELECT COUNT(*) FROM withdrawals WHERE status = 'pending') c, "
+        "(SELECT COALESCE(SUM(amount),0) FROM withdrawals "
+        "  WHERE status = 'pending') s, "
+        "(SELECT COUNT(*) FROM orders WHERE status = 'awaiting_review') v")
+    return {"withdrawals": r["c"], "withdraw_total": r["s"], "reviews": r["v"]}
 
 
 async def dashboard(days_list=(1, 7, 30), top: int = 5) -> dict:
@@ -1133,16 +1136,21 @@ async def dashboard(days_list=(1, 7, 30), top: int = 5) -> dict:
     money = ("COALESCE(SUM(COALESCE(amount, 0) + COALESCE(balance_used, 0)), 0)")
     where = "status = 'delivered' AND kind = 'purchase'"
 
-    revenue = {}
+    # every window in one round trip rather than one each
+    parts, args = [], []
     for d in days_list:
-        row = await q1(f"SELECT {money} s, COUNT(*) c FROM orders WHERE {where} "
-                       f"AND COALESCE(paid_at, created_at) > datetime('now', ?)",
-                       (f"-{d} days",))
-        revenue[str(d)] = {"revenue": round(float(row["s"] or 0), 2),
-                           "orders": int(row["c"] or 0)}
-    row = await q1(f"SELECT {money} s, COUNT(*) c FROM orders WHERE {where}")
-    revenue["all"] = {"revenue": round(float(row["s"] or 0), 2),
-                      "orders": int(row["c"] or 0)}
+        parts.append(f"(SELECT {money} FROM orders WHERE {where} "
+                     f"AND COALESCE(paid_at, created_at) > datetime('now', ?)) s{d}")
+        parts.append(f"(SELECT COUNT(*) FROM orders WHERE {where} "
+                     f"AND COALESCE(paid_at, created_at) > datetime('now', ?)) c{d}")
+        args += [f"-{d} days", f"-{d} days"]
+    parts.append(f"(SELECT {money} FROM orders WHERE {where}) sall")
+    parts.append(f"(SELECT COUNT(*) FROM orders WHERE {where}) call")
+    row = await q1("SELECT " + ", ".join(parts), args)
+    revenue = {str(d): {"revenue": round(float(row[f"s{d}"] or 0), 2),
+                        "orders": int(row[f"c{d}"] or 0)} for d in days_list}
+    revenue["all"] = {"revenue": round(float(row["sall"] or 0), 2),
+                      "orders": int(row["call"] or 0)}
 
     products = await q(
         f"SELECT product_name AS name, SUM(qty) units, {money} revenue, "
@@ -1165,29 +1173,33 @@ async def dashboard(days_list=(1, 7, 30), top: int = 5) -> dict:
 
 
 async def stats() -> dict:
-    def one(sql, args=()):
-        return q1(sql, args)
+    """The Today figures, in one round trip.
 
-    users = (await one("SELECT COUNT(*) c FROM users"))["c"]
-    banned = (await one("SELECT COUNT(*) c FROM users WHERE is_banned = 1"))["c"]
-    orders_total = (await one("SELECT COUNT(*) c FROM orders WHERE status = 'delivered'"))["c"]
-    # amount + balance_used, matching dashboard(). Summing amount alone counts
-    # only the part paid on the rail, so every order part-paid from wallet was
-    # under-reported by exactly the wallet share — and the two screens
-    # disagreed about the same sale.
+    Eight scalar counts across five tables. Asked separately they were eight
+    sequential round trips — nothing on local SQLite, most of a second on a
+    hosted database in another region. Scalar subqueries let the engine answer
+    all of them at once, which both SQLite and Postgres support.
+
+    amount + balance_used, matching dashboard(): summing amount alone counts
+    only the part paid on the rail, so an order part-paid from wallet would be
+    under-reported by exactly the wallet share.
+    """
     money = "COALESCE(SUM(COALESCE(amount, 0) + COALESCE(balance_used, 0)), 0)"
-    rev_all = (await one(
-        f"SELECT {money} s FROM orders "
-        "WHERE status = 'delivered' AND kind = 'purchase'"))["s"]
-    rev_today = (await one(
-        f"SELECT {money} s FROM orders WHERE status = 'delivered' "
-        "AND kind = 'purchase' "
-        "AND substr(paid_at, 1, 10) = substr(datetime('now'), 1, 10)"))["s"]
-    pending = (await one("SELECT COUNT(*) c FROM orders WHERE status IN ('pending','awaiting_review')"))["c"]
-    prods = (await one("SELECT COUNT(*) c FROM products WHERE is_active = 1"))["c"]
-    in_stock = (await one("SELECT COUNT(*) c FROM stock WHERE is_sold = 0"))["c"]
-    return dict(users=users, banned=banned, orders=orders_total, rev_all=rev_all,
-                rev_today=rev_today, pending=pending, products=prods, in_stock=in_stock)
+    r = await q1(
+        "SELECT "
+        "(SELECT COUNT(*) FROM users) users, "
+        "(SELECT COUNT(*) FROM users WHERE is_banned = 1) banned, "
+        "(SELECT COUNT(*) FROM orders WHERE status = 'delivered') orders, "
+        f"(SELECT {money} FROM orders WHERE status = 'delivered' "
+        "  AND kind = 'purchase') rev_all, "
+        f"(SELECT {money} FROM orders WHERE status = 'delivered' "
+        "  AND kind = 'purchase' "
+        "  AND substr(paid_at, 1, 10) = substr(datetime('now'), 1, 10)) rev_today, "
+        "(SELECT COUNT(*) FROM orders "
+        "  WHERE status IN ('pending','awaiting_review')) pending, "
+        "(SELECT COUNT(*) FROM products WHERE is_active = 1) products, "
+        "(SELECT COUNT(*) FROM stock WHERE is_sold = 0) in_stock")
+    return dict(r)
 
 
 async def low_stock(threshold: int):
@@ -1262,13 +1274,39 @@ async def user_summary(tg_id: int) -> dict:
 
 
 async def catalog() -> list[dict]:
-    out = []
-    for c in await categories():
-        prods = []
-        for p in await products(c["id"], only_active=False):
-            prods.append({**dict(p), "stock": await stock_count(p["id"])})
-        out.append({**dict(c), "products": prods})
-    return out
+    """Every category with its products and unsold stock counts.
+
+    Three queries regardless of catalogue size. This used to ask for the stock
+    count once per product — invisible on local SQLite, and a round trip each
+    on a hosted database, which is what made the Catalog tab slow.
+    """
+    counts = {r["product_id"]: r["n"] for r in await q(
+        "SELECT product_id, COUNT(*) n FROM stock WHERE is_sold = 0 "
+        "GROUP BY product_id")}
+    rows = await q("SELECT * FROM products ORDER BY id")
+    by_cat: dict[int, list] = {}
+    for p in rows:
+        by_cat.setdefault(p["category_id"], []).append(
+            {**dict(p), "stock": counts.get(p["id"], 0)})
+    return [{**dict(c), "products": by_cat.get(c["id"], [])}
+            for c in await categories()]
+
+
+async def user_summaries(ids: list[int]) -> dict[int, dict]:
+    """Order count and spend for many users at once.
+
+    One query rather than one per user — the Users screen lists 60 at a time,
+    and asking separately for each was 120 round trips.
+    """
+    if not ids:
+        return {}
+    marks = ",".join("?" * len(ids))
+    rows = await q(
+        f"SELECT user_id, COUNT(*) c, "
+        f"COALESCE(SUM(COALESCE(amount,0) + COALESCE(balance_used,0)),0) s "
+        f"FROM orders WHERE status = 'delivered' AND user_id IN ({marks}) "
+        f"GROUP BY user_id", ids)
+    return {r["user_id"]: {"orders": r["c"], "spent": r["s"]} for r in rows}
 
 
 async def revenue_series(days: int = 14) -> list[dict]:

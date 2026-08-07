@@ -754,10 +754,11 @@ async def adm_wallet(request):
 
 
 async def adm_users(request):
-    out = []
-    for u in await db.list_users(request.query.get("q", ""), 60):
-        out.append({**dict(u), **await db.user_summary(u["tg_id"])})
-    return web.json_response(out)
+    users = await db.list_users(request.query.get("q", ""), 60)
+    summaries = await db.user_summaries([u["tg_id"] for u in users])
+    return web.json_response([
+        {**dict(u), **summaries.get(u["tg_id"], {"orders": 0, "spent": 0})}
+        for u in users])
 
 
 async def adm_user_action(request):
