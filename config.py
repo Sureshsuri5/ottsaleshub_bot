@@ -167,6 +167,12 @@ class Config:
     # How long an expired order's deposit address keeps being watched, so a
     # late payment is credited instead of stranded. 0 turns it off.
     late_hours: int = int(os.getenv("LATE_PAYMENT_HOURS", "48"))
+    # While a buyer is at a payment screen, poll this often instead. A payment
+    # is nearly always made in the first few minutes, so this buys most of the
+    # speed for a fraction of the requests a low interval everywhere would
+    # cost. 0 disables the fast lane.
+    fast_interval: int = int(os.getenv("FAST_POLL_SECONDS", "4"))
+    fast_window: int = int(os.getenv("FAST_POLL_MINUTES", "10"))
     low_stock: int = int(os.getenv("LOW_STOCK_ALERT", "3"))
 
     @property

@@ -14,8 +14,26 @@ from config import cfg
 log = logging.getLogger(__name__)
 
 
+async def _interval() -> int:
+    """How long to wait before the next sweep.
+
+    Fast while an order is young enough that someone is plausibly paying it,
+    normal otherwise. The check is one indexed query against a table that is
+    almost always tiny — far cheaper than the RPC call it decides on.
+    """
+    if cfg.fast_interval <= 0 or cfg.fast_interval >= cfg.poll_interval:
+        return cfg.poll_interval
+    try:
+        if await db.has_fresh_order(cfg.fast_window):
+            return cfg.fast_interval
+    except Exception:
+        pass
+    return cfg.poll_interval
+
+
 async def run(bot: Bot) -> None:
-    log.info("payment watcher started (every %ss)", cfg.poll_interval)
+    log.info("payment watcher started (every %ss, %ss while a payment is open)",
+             cfg.poll_interval, cfg.fast_interval)
     while True:
         try:
             await _tick(bot)
@@ -23,7 +41,7 @@ async def run(bot: Bot) -> None:
             raise
         except Exception:
             log.exception("watcher tick failed")
-        await asyncio.sleep(cfg.poll_interval)
+        await asyncio.sleep(await _interval())
 
 
 _last_prune = 0.0

@@ -911,6 +911,20 @@ async def open_orders(provider: str | None = None):
     return await q(sql + " ORDER BY id", args)
 
 
+async def has_fresh_order(minutes: int) -> bool:
+    """Is anyone sitting at a payment screen right now?
+
+    Used to decide how hard to poll. An order minutes old is one a buyer is
+    probably paying this instant; one from half an hour ago is probably
+    abandoned, and polling for it at the same rate spends RPC calls on nothing.
+    """
+    row = await q1(
+        "SELECT 1 FROM orders WHERE status = 'pending' "
+        "AND pay_address IS NOT NULL AND pay_address != '' "
+        "AND created_at > datetime('now', ?) LIMIT 1", (f"-{max(1, minutes)} minutes",))
+    return bool(row)
+
+
 async def late_orders(provider: str | None = None, hours: int = 48):
     """Recently closed orders whose deposit address is still worth watching.
 
