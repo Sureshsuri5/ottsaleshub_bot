@@ -316,9 +316,12 @@ async def product_text(p, uid: int) -> str:
     if not discounted and saved > 1e-9:
         line += await texts.t("product_was", was=cfg.money(p["price"]))
     lines = [f"<b>{name_of(p)}</b>", "", line]
-    if tier:
+    # Only when their price is actually lower. A tier that happens to match the
+    # list price on this product printed the same figure twice and read like a
+    # mistake — the buyer is being told about a discount they aren't getting.
+    if discounted:
         off = (f" — <b>{round(saved / p['price'] * 100)}% off</b>"
-               if p["price"] > 0 and saved > 1e-9 else "")
+               if p["price"] > 0 else "")
         lines.append(await texts.t("product_tier", price=cfg.money(price),
                                    off=off, tier=esc(tier)))
     if p["description"].strip():
@@ -473,10 +476,22 @@ async def payment_rails(c: CallbackQuery, state: FSMContext):
         head = f"Top up <b>{cfg.money(qty / 100 if qty > 1000 else qty)}</b>"
     else:
         p = await db.product(pid)
-        head = (f"{name_of(p)} × {qty}\n"
-                f"Total: <b>{cfg.money(p['price'] * qty)}</b>")
+        # The buyer's own price, and what is left after their wallet balance is
+        # applied. This showed p["price"] * qty — the list price, before any
+        # tier discount and before the deduction — so the figure here could
+        # disagree with both the summary above it and the amount the rail then
+        # asked for.
+        unit_price = await pricing.price_for(p, c.from_user.id)
+        total = round(unit_price * qty, 2)
+        u = await db.get_user(c.from_user.id)
+        applied = round(min(float(u["balance"]) if u else 0.0, total), 2)
+        head = f"{name_of(p)} × {qty}\nTotal: <b>{cfg.money(total)}</b>"
+        if applied > 0.009:
+            head += (f"\nBalance: <b>−{cfg.money(applied)}</b>"
+                     f"\n{{{{dep_amount}}}} Amount to pay: "
+                     f"<b>{cfg.money(round(total - applied, 2))}</b>")
     await show(c,
-               f"💳 <b>Select Payment Method</b>\n\n{head}",
+               await flair.render(f"💳 <b>Select Payment Method</b>\n\n{head}"),
                k.rails_kb(pid, qty, kind, group))
     await c.answer()
 
