@@ -628,7 +628,10 @@ async def create_order(c: CallbackQuery, state: FSMContext):
         await state.set_state(Buy.waiting_ref)
         await state.update_data(review_oid=oid)
 
-    header = (f"<b>{prov.title}</b>\n\n" if awaiting or kind == "topup"
+    # the rail's own premium emoji sits on this title line; the sections below
+    # keep their own icons (🏦 for the account block, 💵 for the amount)
+    header = (f"<b>{flair.rail_title(code, prov.title)}</b>\n\n"
+              if awaiting or kind == "topup"
               else f"🧾 <b>Order #{oid}</b> — {esc(name)} ×{qty}\n\n")
     back_to = "menu:balance" if kind == "topup" else "shop"
     if inv.qr_payload:

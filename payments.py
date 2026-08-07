@@ -1271,7 +1271,7 @@ class BinancePayProvider:
             ]
         lines += [
             "",
-            f"{{{{dep_bank}}}} <b>{_rail_title(self.code, self.heading)}</b>", "",
+            f"{{{{dep_bank}}}} <b>{self.heading}</b>", "",
             f"<b>{self.label}:</b>", f"<code>{account}</code>",
             "{{dep_point}} <i>Tap to copy</i>", "", "———————————————", "",
         ]
@@ -1421,7 +1421,7 @@ class ManualTransferProvider:
         else:
             lines.append(f"💰 Send exactly <b>{cfg.money(order['amount'])}</b>.")
         lines += ["", "———————————————", "",
-                  f"{{{{dep_bank}}}} <b>{_rail_title(self.code, self.heading)}</b>", "",
+                  f"{{{{dep_bank}}}} <b>{self.heading}</b>", "",
                   f"<b>{self.label}:</b>", f"<code>{account}</code>",
                   "{{dep_point}} <i>Tap to copy</i>", "",
                   "———————————————", "",
