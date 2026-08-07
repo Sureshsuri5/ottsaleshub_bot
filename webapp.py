@@ -594,6 +594,12 @@ async def adm_withdrawals(request):
     return web.json_response({"pending": out})
 
 
+async def adm_dashboard(request):
+    d = await db.dashboard()
+    d["currency"] = cfg.symbol
+    return web.json_response(d)
+
+
 async def adm_wallet_hide(request):
     """Hide a swept address from the wallet list, or bring it back.
 
@@ -1110,6 +1116,7 @@ def build_app(bot: Bot) -> web.Application:
     r.add_get("/api/admin/withdrawals", adm_withdrawals)
     r.add_post("/api/admin/withdrawals", adm_withdrawals)
     r.add_post("/api/terms", api_terms_accept)
+    r.add_get("/api/admin/dashboard", adm_dashboard)
     r.add_get("/api/admin/wallet", adm_wallet)
     r.add_post("/api/admin/wallet/hide", adm_wallet_hide)
     r.add_get("/api/admin/users", adm_users)

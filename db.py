@@ -1105,6 +1105,48 @@ async def alert_counts() -> dict:
     return {"withdrawals": r["c"], "withdraw_total": r["s"], "reviews": v["c"]}
 
 
+async def dashboard(days_list=(1, 7, 30), top: int = 5) -> dict:
+    """Revenue over several windows, best sellers and best buyers.
+
+    Only delivered purchases count. Deposits are excluded: money moved into a
+    wallet isn't revenue until it buys something, and counting both would
+    report the same payment twice.
+
+    `balance_used` is added back in — an order part-paid from wallet is still
+    a sale at its full value, and using `amount` alone would quietly
+    under-report every discounted or part-paid order.
+    """
+    money = ("COALESCE(SUM(COALESCE(amount, 0) + COALESCE(balance_used, 0)), 0)")
+    where = "status = 'delivered' AND kind = 'purchase'"
+
+    revenue = {}
+    for d in days_list:
+        row = await q1(f"SELECT {money} s, COUNT(*) c FROM orders WHERE {where} "
+                       f"AND COALESCE(paid_at, created_at) > datetime('now', ?)",
+                       (f"-{d} days",))
+        revenue[str(d)] = {"revenue": round(float(row["s"] or 0), 2),
+                           "orders": int(row["c"] or 0)}
+    row = await q1(f"SELECT {money} s, COUNT(*) c FROM orders WHERE {where}")
+    revenue["all"] = {"revenue": round(float(row["s"] or 0), 2),
+                      "orders": int(row["c"] or 0)}
+
+    products = await q(
+        f"SELECT product_name AS name, SUM(qty) units, {money} revenue, "
+        f"COUNT(*) orders FROM orders WHERE {where} "
+        f"GROUP BY product_name ORDER BY units DESC LIMIT ?", (top,))
+    buyers = await q(
+        f"SELECT o.user_id, u.username, u.first_name, COUNT(*) orders, "
+        f"SUM(o.qty) units, {money.replace('amount', 'o.amount').replace('balance_used', 'o.balance_used')} spent "
+        f"FROM orders o LEFT JOIN users u ON u.tg_id = o.user_id "
+        f"WHERE o.status = 'delivered' AND o.kind = 'purchase' "
+        f"GROUP BY o.user_id ORDER BY spent DESC LIMIT ?", (top,))
+    return {
+        "revenue": revenue,
+        "products": [dict(r) for r in products],
+        "buyers": [dict(r) for r in buyers],
+    }
+
+
 async def stats() -> dict:
     def one(sql, args=()):
         return q1(sql, args)

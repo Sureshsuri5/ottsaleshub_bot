@@ -388,3 +388,15 @@ img.brandmark { object-fit: cover; }
   border: 1px solid var(--line, rgba(255, 255, 255, .12));
 }
 .whide:hover { color: var(--fg, #fff); }
+
+/* Dashboard windows: two across so the pair a shop compares most — today
+   against the week — sit side by side rather than needing a scroll. */
+.dash { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0 18px; }
+.dash div {
+  padding: 12px 13px; border-radius: 12px;
+  background: var(--card, rgba(255, 255, 255, .04));
+}
+.dash span { display: block; font-size: 11px; color: var(--muted);
+             text-transform: uppercase; letter-spacing: .05em; }
+.dash b { display: block; font-size: 19px; letter-spacing: -.02em; margin-top: 2px; }
+.dash .small { text-transform: none; letter-spacing: 0; font-size: 11.5px; }

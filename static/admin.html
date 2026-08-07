@@ -99,6 +99,8 @@ function homeView() {
     html(`
       <h1>Today</h1>
       <p class="sub">${esc(me.shop)}</p>
+      <button id="dashbtn" class="ghost" style="margin-bottom:12px">
+        Dashboard — revenue, best sellers, top buyers →</button>
 
       <div class="card">
         <div class="tiny muted">Revenue today</div>
@@ -150,6 +152,7 @@ function homeView() {
             <span class="num" style="color:${p.c ? 'var(--amber)' : 'var(--rose)'}">${p.c}</span></div>
           ${gauge(p.c, 0, threshold)}
         </div>`).join('')}` : ''}`);
+    on('#dashbtn', 'click', () => { haptic(); dashView(); });
     view.querySelector('[data-go="wd"]')?.addEventListener('click', withdrawalsView);
     view.querySelector('[data-go="reviews"]')?.addEventListener('click',
       () => ordersView('open'));
@@ -520,6 +523,53 @@ function userView(uid) {
 
 /* ------------------------------------------------------------------- more */
 let walletShowAll = false;
+
+function dashView() {
+  pushScreen(async () => {
+    const d = await api('/admin/dashboard');
+    const money = (n) => `${d.currency || ''}${Number(n || 0).toFixed(2)}`;
+    const who = (b) => b.username ? '@' + esc(b.username)
+                                  : esc(b.first_name || b.user_id);
+    const win = (k, label) => `
+      <div><span>${label}</span><b>${money(d.revenue[k].revenue)}</b>
+        <span class="muted small">${d.revenue[k].orders} order${
+          d.revenue[k].orders === 1 ? '' : 's'}</span></div>`;
+    html(`
+      <h1>Dashboard</h1>
+      <p class="sub">Delivered purchases only. Deposits are not counted —
+        money moved into a wallet is not revenue until it buys something.</p>
+
+      <div class="dash">
+        ${win('1', 'Last 24 hours')}${win('7', 'Last 7 days')}
+        ${win('30', 'Last 30 days')}${win('all', 'All time')}
+      </div>
+
+      <h2>Best sellers</h2>
+      ${!d.products.length ? '<p class="sub">No sales yet.</p>' : `
+        <div class="wallet">${d.products.map((p, i) => `
+          <div class="wcard"><div class="wtop">
+            <span class="wname">${i + 1}. ${esc(p.name || '—')}</span>
+            <span class="wamt">${money(p.revenue)}</span></div>
+            <div class="wmeta"><span>${p.units} unit${
+              p.units === 1 ? '' : 's'} · ${p.orders} order${
+              p.orders === 1 ? '' : 's'}</span></div>
+          </div>`).join('')}</div>`}
+
+      <h2>Top buyers</h2>
+      ${!d.buyers.length ? '<p class="sub">No sales yet.</p>' : `
+        <div class="wallet">${d.buyers.map((b, i) => `
+          <div class="wcard"><div class="wtop">
+            <span class="wname">${i + 1}. ${who(b)}</span>
+            <span class="wamt">${money(b.spent)}</span></div>
+            <div class="wmeta"><span>${b.orders} order${
+              b.orders === 1 ? '' : 's'} · ${b.units} unit${
+              b.units === 1 ? '' : 's'}</span>
+              <code class="small">${b.user_id}</code></div>
+          </div>`).join('')}</div>`}
+    `);
+  });
+}
+
 
 function walletView() {
   pushScreen(async () => {
