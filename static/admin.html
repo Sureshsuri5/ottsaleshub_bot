@@ -362,7 +362,10 @@ function productView(pid) {
         <button id="saveStatic" style="margin-top:8px">Save content</button>
         <button class="ghost" id="unlimited" style="margin-top:8px">Switch to per-unit stock</button>
       ` : `
-        <label>Add items — one per line, each goes to one buyer</label>
+        <label class="row" style="justify-content:space-between">
+          <span>Add items — one per line, each goes to one buyer</span>
+          <span class="tiny muted" id="linecount"></span>
+        </label>
         <textarea id="lines" placeholder="KEY-AAAA-1111&#10;KEY-BBBB-2222"></textarea>
         <button id="addStock" style="margin-top:8px">Add to stock</button>
         <input type="file" id="importFile" accept=".txt,.csv,text/plain"
@@ -427,6 +430,24 @@ function productView(pid) {
     // Reads the file in the browser and drops it into the box, so you can see
     // what you're about to add before committing it — importing straight to
     // the database gives you no chance to notice a header row or a stray line.
+    // Live count beside the label. Pasting a few hundred lines gives no sense
+    // of how many there are, and the number you're adding is worth knowing
+    // before you commit it — duplicates within the paste are called out too,
+    // since those are silently dropped on save.
+    function countLines() {
+      const el = view.querySelector('#lines');
+      const out = view.querySelector('#linecount');
+      if (!el || !out) return;
+      const lines = el.value.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      const unique = new Set(lines).size;
+      const dupes = lines.length - unique;
+      out.textContent = !lines.length ? ''
+        : `${unique} item${unique === 1 ? '' : 's'}`
+          + (dupes ? ` · ${dupes} duplicate${dupes === 1 ? '' : 's'}` : '');
+    }
+    on('#lines', 'input', countLines);
+    countLines();
+
     on('#importBtn', 'click', () => view.querySelector('#importFile').click());
     on('#importFile', 'change', async (ev) => {
       const file = ev.target.files?.[0];
@@ -436,6 +457,7 @@ function productView(pid) {
       const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
       box.value = (box.value.trim() ? box.value.trim() + '\n' : '') + lines.join('\n');
       ev.target.value = '';
+      countLines();
       toast(`${lines.length} line${lines.length === 1 ? '' : 's'} loaded — check, then add`);
     });
 
@@ -446,6 +468,7 @@ function productView(pid) {
       const r = await api(`/admin/product/${pid}/stock`, { method: 'POST', body: { lines } });
       e.target.disabled = false;
       view.querySelector('#lines').value = '';
+      countLines();
       toast(r.skipped
         ? `${r.added} added · ${r.skipped} duplicate${r.skipped === 1 ? '' : 's'} skipped`
         : `${r.added} item${r.added === 1 ? '' : 's'} added`,
