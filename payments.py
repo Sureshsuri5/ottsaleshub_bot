@@ -43,18 +43,20 @@ ETHERSCAN = "https://api.etherscan.io/v2/api"
 # reading Transfer logs straight from a node needs no key and no plan.
 EVM_CHAINS = {
     "bep20": dict(title="₮ USDT/USDC BEP20", chain_id=56, decimals=18, network="BEP20",
-                  rpc=("https://bsc-rpc.publicnode.com",
-                       "https://binance.llamarpc.com",
-                       "https://bsc-dataseed.binance.org",
+                  rpc=("https://bsc-dataseed.bnbchain.org",
+                       "https://bsc-dataseed1.bnbchain.org",
+                       "https://bsc-dataseed2.bnbchain.org",
+                       "https://bsc-rpc.publicnode.com",
                        "https://bsc-dataseed1.defibit.io",
-                       "https://1rpc.io/bnb",
-                       "https://rpc.ankr.com/bsc"),
+                       "https://bsc-dataseed1.ninicoin.io",
+                       "https://binance.llamarpc.com",
+                       "https://1rpc.io/bnb"),
                   contracts=("0x55d398326f99059fF775485246999027B3197955",   # USDT
                              "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d")),  # USDC
     "polygon": dict(title="◈ USDT Polygon", chain_id=137, decimals=6, network="Polygon",
                     rpc=("https://polygon-rpc.com",
-                         "https://rpc.ankr.com/polygon",
-                         "https://polygon-bor-rpc.publicnode.com"),
+                         "https://polygon-bor-rpc.publicnode.com",
+                         "https://polygon.drpc.org"),
                     contracts=("0xc2132D05D31c914a87C6611C10748AEb04B58e8F",)),
     "arbitrum": dict(title="₮ USDT Arbitrum", chain_id=42161, decimals=6, network="Arbitrum",
                      rpc=("https://arb1.arbitrum.io/rpc",
