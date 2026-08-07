@@ -835,19 +835,23 @@ function moreView() {
         '<div class="card"><span class="pill wait">Falling back</span> ' +
         '<span class="small muted">Telegram refused a custom emoji this run — plain emoji ' +
         'are being used.</span></div>'}
+      <input class="search" id="fxq" placeholder="Filter by name, e.g. buy or refer">
       ${[...new Set(f.slots.map((s) => s.section))].map((sec) => `
-        <h3 style="margin:18px 0 8px;font-size:14px">${esc(sec)}</h3>
-        ${f.slots.filter((s) => s.section === sec).map((s) => `
-        <div class="card">
-          <div class="between"><b>${s.fallback} ${esc(s.label || s.name)}</b>
-            <span class="tiny muted">${esc(s.name)}</span></div>
-          <label>Custom emoji id</label>
-          <input class="fx" data-k="emoji_${s.name}" value="${esc(s.emoji)}"
-                 inputmode="numeric" placeholder="5368324170671202286">
-          <label>Sticker file id</label>
-          <input class="fx" data-k="sticker_${s.name}" value="${esc(s.sticker)}"
-                 placeholder="CAACAgIAAxkBA…">
-        </div>`).join('')}`).join('')}
+        <details class="fxsec">
+          <summary>${esc(sec)}
+            <span class="fxcount">${f.slots.filter((x) => x.section === sec
+              && (x.emoji || x.sticker)).length}/${
+              f.slots.filter((x) => x.section === sec).length}</span></summary>
+          ${f.slots.filter((x) => x.section === sec).map((x) => `
+            <div class="fxrow" data-find="${esc((x.name + ' ' + (x.label || '')).toLowerCase())}">
+              <div class="fxname">${x.fallback} ${esc(x.label || x.name)}
+                <code>${esc(x.name)}</code></div>
+              <input class="fx" data-k="emoji_${x.name}" value="${esc(x.emoji)}"
+                     inputmode="numeric" placeholder="emoji id">
+              <input class="fx" data-k="sticker_${x.name}" value="${esc(x.sticker)}"
+                     placeholder="sticker id">
+            </div>`).join('')}
+        </details>`).join('')}
       <button class="ghost" id="saveFlair">Save stickers &amp; emoji</button>
 
       <h2>Button styles</h2>
