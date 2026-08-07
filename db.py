@@ -776,6 +776,25 @@ async def add_stock(pid: int, lines: Iterable[str]) -> int:
     return await ex_many("INSERT INTO stock (product_id, payload) VALUES (?, ?)", rows)
 
 
+async def stock_rows(pid: int, limit: int = 200) -> list:
+    """Unsold stock with ids, so a single item can be removed."""
+    return await q("SELECT id, payload FROM stock "
+                   "WHERE product_id = ? AND is_sold = 0 ORDER BY id LIMIT ?",
+                   (pid, limit))
+
+
+async def delete_stock(pid: int, sid: int) -> bool:
+    """Remove one unsold item.
+
+    Sold rows are never deletable here: they are the record of what a buyer
+    was given, and My Orders reads from them. The product_id is part of the
+    condition so a stray id can't delete another product's stock.
+    """
+    n = await ex_count("DELETE FROM stock WHERE id = ? AND product_id = ? "
+                       "AND is_sold = 0", (sid, pid))
+    return n > 0
+
+
 async def purge_sold(pid: int) -> int:
     return await ex_count("DELETE FROM stock WHERE product_id = ? AND is_sold = 1", (pid,))
 

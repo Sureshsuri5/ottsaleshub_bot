@@ -536,10 +536,20 @@ async def adm_product_update(request):
 async def adm_stock(request):
     pid = int(request.match_info["pid"])
     if request.method == "GET":
-        r = await db.q("SELECT payload FROM stock WHERE product_id = ? AND is_sold = 0 "
-                       "ORDER BY id", (pid,))
-        return web.json_response({"items": [x["payload"] for x in r]})
+        rows_ = await db.stock_rows(pid)
+        return web.json_response({
+            "items": [x["payload"] for x in rows_],          # legacy shape
+            "rows": [{"id": x["id"], "payload": x["payload"]} for x in rows_],
+            "sold": (await db.q1("SELECT COUNT(*) c FROM stock "
+                                 "WHERE product_id = ? AND is_sold = 1", (pid,)))["c"],
+        })
     d = await body(request)
+    if d.get("delete_id"):
+        ok = await db.delete_stock(pid, int(d["delete_id"]))
+        if not ok:
+            return web.json_response(
+                {"error": "That item is already sold or gone."}, status=400)
+        return web.json_response({"ok": True, "stock": await db.stock_count(pid)})
     if d.get("purge"):
         return web.json_response({"removed": await db.purge_sold(pid)})
     n = await db.add_stock(pid, str(d.get("lines", "")).splitlines())

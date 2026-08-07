@@ -365,6 +365,9 @@ function productView(pid) {
         <label>Add items — one per line, each goes to one buyer</label>
         <textarea id="lines" placeholder="KEY-AAAA-1111&#10;KEY-BBBB-2222"></textarea>
         <button id="addStock" style="margin-top:8px">Add to stock</button>
+
+        <label style="margin-top:14px">Unsold items</label>
+        <div id="stocklist" class="wallet"><p class="sub">Loading…</p></div>
         <div class="row" style="margin-top:8px;gap:8px">
           <button class="ghost mini" id="export">Export unsold</button>
           <button class="ghost mini" id="purge">Clear sold rows</button>
