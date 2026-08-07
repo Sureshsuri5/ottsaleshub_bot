@@ -503,3 +503,4 @@ img.brandmark { object-fit: cover; }
 .msgrow > summary::-webkit-details-marker { display: none; }
 .msgrow > summary code { font-size: 10.5px; color: var(--muted); }
 .msgrow textarea { margin: 0; font-size: 13px; }
+

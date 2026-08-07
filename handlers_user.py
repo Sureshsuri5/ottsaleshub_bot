@@ -1053,17 +1053,20 @@ async def api_screen(c: CallbackQuery):
     use = await db.api_usage(c.from_user.id)
     base = cfg.webapp_url or "https://your-shop-domain"
 
-    body = ("📗 <b>Reseller Product API</b>\n\n"
+    # every icon comes from a flair slot, so this screen can be restyled from
+    # the panel like the rest of the bot
+    body = ("{{api_title}} <b>Reseller Product API</b>\n\n"
             "Sell our products from your own site or bot. Orders are delivered "
             "from our stock and the cost comes off your wallet balance.\n\n"
-            f"{'🟢' if key else '⚪️'} <b>Status:</b> "
-            f"{'Active' if key else 'No key yet'}\n"
-            f"👛 <b>Balance:</b> {cfg.money(u['balance'])}\n")
+            + ("{{api_on}} <b>Status:</b> Active\n" if key
+               else "{{api_off}} <b>Status:</b> No key yet\n")
+            + f"{{{{api_wallet}}}} <b>Balance:</b> {cfg.money(u['balance'])}\n")
     if key:
-        body += (f"🔑 <b>API key:</b>\n<span class=\"tg-spoiler\">"
+        body += (f"{{{{api_key}}}} <b>API key:</b>\n<span class=\"tg-spoiler\">"
                  f"<code>{esc(key)}</code></span>\n"
-                 f"📦 <b>Orders placed:</b> {use['orders']}\n"
-                 f"💵 <b>Spent (30 days):</b> {cfg.money(use['recent'])}\n\n"
+                 f"{{{{api_orders}}}} <b>Orders placed:</b> {use['orders']}\n"
+                 f"{{{{api_spend}}}} <b>Spent (30 days):</b> "
+                 f"{cfg.money(use['recent'])}\n\n"
                  "<i>Tap the hidden key to reveal and copy it.</i>\n\n")
     else:
         body += "\nGenerate a key below to get started.\n\n"
@@ -1074,7 +1077,7 @@ async def api_screen(c: CallbackQuery):
              "• Buy — <code>POST /api/v1/purchase</code>\n"
              "• Orders — <code>GET /api/v1/orders</code>\n"
              "• One order — <code>GET /api/v1/order/{code}</code>")
-    await show(c, body, k.api_kb(bool(key)))
+    await show(c, await flair.render(body), k.api_kb(bool(key)))
     await c.answer()
 
 
@@ -1083,7 +1086,7 @@ async def api_docs(c: CallbackQuery):
     """Enough to write a working integration without leaving Telegram."""
     base = cfg.webapp_url or "https://your-shop-domain"
     body = (
-        "📗 <b>API documentation</b>\n\n"
+        "{{api_title}} <b>API documentation</b>\n\n"
         "Send your key on every request:\n"
         "<code>X-API-Key: your_key</code>\n"
         "<i>(or <code>Authorization: Bearer your_key</code>)</i>\n\n"

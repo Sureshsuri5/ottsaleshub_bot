@@ -121,14 +121,25 @@ def withdraw_kb(methods, can: bool) -> InlineKeyboardMarkup:
 
 
 def api_kb(has_key: bool) -> InlineKeyboardMarkup:
+    """Colour by consequence, not decoration.
+
+    Red only on the one button that breaks a live integration; green on the one
+    that creates access; blue on the two that are safe to press at any time.
+    Rotate stays neutral — it is destructive enough to deserve a moment's pause,
+    but not the same alarm as deleting outright.
+    """
     rows = []
     if has_key:
-        rows.append([btn("🗑 Delete API key", "pf:apidel", style="danger")])
-        rows.append([btn("♻️ Rotate key", "pf:apikey")])
+        rows.append([btn("🗑 Delete API key", "pf:apidel", style="danger",
+                         icon_slot="api_del")])
+        rows.append([btn("♻️ Rotate key", "pf:apikey", icon_slot="api_rotate")])
     else:
-        rows.append([btn("🔑 Generate API key", "pf:apikey", style="success")])
-    rows.append([btn("📗 API documentation", "pf:apidocs")])
-    rows.append([btn("🔄 Refresh", "pf:api")])
+        rows.append([btn("🔑 Generate API key", "pf:apikey", style="success",
+                         icon_slot="api_new")])
+    rows.append([btn("📗 API documentation", "pf:apidocs", style="primary",
+                     icon_slot="api_docs")])
+    rows.append([btn("🔄 Refresh", "pf:api", style="primary",
+                     icon_slot="api_refresh")])
     rows.append([back_btn("Back", "menu:profile")])
     return kb(*rows)
 
