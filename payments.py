@@ -418,7 +418,7 @@ class EvmTokenProvider:
         confirms = "3 confirmations (~9 sec)" if self.chain_id == 56 else "1 confirmation"
         variable = order["kind"] == "topup" and not order["amount"]
 
-        head = [f"{self.title} — <b>Auto-Verify</b>", ""]
+        head = [f"{_rail_title(self.code, self.title)} — <b>Auto-Verify</b>", ""]
         if not variable:
             head = [
                 "———————————————",
@@ -426,7 +426,7 @@ class EvmTokenProvider:
                 f"{{{{dep_num}}}} Quantity: <b>{order['qty']}</b>",
                 f"{{{{dep_amount}}}} Total: <b>{cfg.money(order['amount'])}</b>",
                 "———————————————", "",
-                f"{self.title} — <b>Auto-Verify</b>", "",
+                f"{_rail_title(self.code, self.title)} — <b>Auto-Verify</b>", "",
             ]
 
         body = list(head)
@@ -1271,7 +1271,7 @@ class BinancePayProvider:
             ]
         lines += [
             "",
-            f"{{{{dep_bank}}}} <b>{self.heading}</b>", "",
+            f"{{{{dep_bank}}}} <b>{_rail_title(self.code, self.heading)}</b>", "",
             f"<b>{self.label}:</b>", f"<code>{account}</code>",
             "{{dep_point}} <i>Tap to copy</i>", "", "———————————————", "",
         ]
@@ -1421,7 +1421,7 @@ class ManualTransferProvider:
         else:
             lines.append(f"💰 Send exactly <b>{cfg.money(order['amount'])}</b>.")
         lines += ["", "———————————————", "",
-                  f"{{{{dep_bank}}}} <b>{self.heading}</b>", "",
+                  f"{{{{dep_bank}}}} <b>{_rail_title(self.code, self.heading)}</b>", "",
                   f"<b>{self.label}:</b>", f"<code>{account}</code>",
                   "{{dep_point}} <i>Tap to copy</i>", "",
                   "———————————————", "",
@@ -1637,6 +1637,19 @@ def ref_label(code: str) -> str:
     'transaction ID' sends them hunting for a field that isn't there.
     """
     return REF_LABELS.get(code, "transaction hash")
+
+
+def _rail_title(code: str, title: str) -> str:
+    """Rail name with its premium emoji, if one is set for that slot.
+
+    Imported lazily: flair builds its slot list from this module's REGISTRY, so
+    a module-level import here would be circular.
+    """
+    try:
+        import flair
+        return flair.rail_title(code, title)
+    except Exception:
+        return title
 
 
 def tx_key(code: str, ref: str) -> str:

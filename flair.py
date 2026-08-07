@@ -257,6 +257,23 @@ SLOTS_META = _build_slots()
 SLOTS = {k: v[0] for k, v in SLOTS_META.items()}
 
 
+def rail_title(code: str, title: str) -> str:
+    """A rail's name with its premium emoji in place of the leading mark.
+
+    The mark a title carries ("₮ USDT/USDC BEP20") becomes the fallback inside
+    the tg-emoji tag, so the line reads the same for anyone whose client won't
+    render the custom one. Buttons already use this slot; this is the same icon
+    in the message body, where Telegram actually allows premium emoji.
+    """
+    eid = icon(f"pay_{code}")
+    if not eid:
+        return title
+    mark = _LEADING_MARK.match(title)
+    plain = mark.group(0).strip() if mark else "💳"
+    rest = _LEADING_MARK.sub("", title).strip() or title
+    return f'<tg-emoji emoji-id="{eid}">{plain}</tg-emoji> {rest}'
+
+
 def slot_label(slot: str) -> str:
     return SLOTS_META.get(slot, ("", slot, ""))[1]
 
