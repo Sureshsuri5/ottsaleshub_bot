@@ -356,18 +356,47 @@ async def announce_restocks(bot: Bot) -> None:
                 stock="∞" if p["infinite"] else avail,
                 desc=f"\n<blockquote expandable>{_esc(desc)}</blockquote>\n"
                      if desc else "")
-            await bot.send_message(
+            sent = await bot.send_message(
                 chat, await flair.render(body),
                 reply_markup=k.kb([k.url_btn(
                     flair.label("buy", f"Buy {p['name']}"),
                     f"https://t.me/{flair.BOT_USERNAME}?start=p_{pid}",
                     style="primary", icon_slot="buy")]))
             log.info("%s announced for product %s", kind, pid)
+
+            if kind == "newproduct_group":
+                await _pin_announcement(bot, chat, sent.message_id)
         except Exception as e:
             log.warning("announcement failed for %s: %s", pid, e)
 
     if first_run:
         await db.set_setting("restock:bootstrapped", "1")
+
+
+async def _pin_announcement(bot: Bot, chat: str, msg_id: int) -> None:
+    """Pin the newest arrival and unpin the one it replaces.
+
+    Telegram allows many pins at once, so without unpinning the bar fills up
+    and the newest product ends up the least visible thing in it. Pinned
+    silently — the announcement itself already notified the group, and a second
+    ping for the same event is what makes people mute a shop.
+
+    Failure is logged, not raised: the announcement has already landed, and a
+    missing pin permission shouldn't look like a broken announcement.
+    """
+    prev = await db.setting("restock:pinned", "")
+    try:
+        await bot.pin_chat_message(chat, msg_id, disable_notification=True)
+        await db.set_setting("restock:pinned", str(msg_id))
+    except Exception as e:
+        log.warning("could not pin in %s — the bot needs pin rights there: %s",
+                    chat, e)
+        return
+    if prev.isdigit() and prev != str(msg_id):
+        try:
+            await bot.unpin_chat_message(chat, int(prev))
+        except Exception:
+            pass          # already gone, or somebody unpinned it by hand
 
 
 async def notify_restock(bot: Bot) -> None:
