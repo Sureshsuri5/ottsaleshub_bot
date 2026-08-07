@@ -519,16 +519,12 @@ function userView(uid) {
 }
 
 /* ------------------------------------------------------------------- more */
-function moreView() {
-  replaceScreen(async () => {
-    const [s, f, msgs, w] = await Promise.all(
-      [api('/admin/settings'), api('/admin/flair'), api('/admin/texts'),
-       api('/admin/wallet').catch(() => ({ ready: false }))]);
+function walletView() {
+  pushScreen(async () => {
+    const w = await api('/admin/wallet');
     const money = (n) => `${w.currency || ''}${Number(n || 0).toFixed(2)}`;
     html(`
-      <h1>More</h1>
-
-      <h2>Deposit wallet</h2>
+      <h1>Deposit wallet</h1>
       ${!w.ready ? `<p class="sub">Per-order addresses are off${
           w.problem ? ` — ${esc(w.problem)}` : ''}.</p>` : `
       <p class="sub">Each order gets its own address, derived from your seed.
@@ -571,7 +567,25 @@ function moreView() {
           taken in, including what you have already moved out.
           ${w.unknown_balances ? `<br>${w.unknown_balances} address(es)
             couldn't be checked — shown as <b>?</b> rather than zero.` : ''}
-        </p>`}`}
+        </p>`}`}`);
+  });
+}
+
+
+function moreView() {
+  replaceScreen(async () => {
+    const [s, f, msgs, w] = await Promise.all(
+      [api('/admin/settings'), api('/admin/flair'), api('/admin/texts'),
+       api('/admin/wallet').catch(() => ({ ready: false }))]);
+    const money = (n) => `${w.currency || ''}${Number(n || 0).toFixed(2)}`;
+    html(`
+      <h1>More</h1>
+
+      <h2>Deposit wallet</h2>
+      <p class="sub">Per-order addresses, live balances, and what is waiting to
+        be swept.</p>
+      <button id="walletbtn" class="ghost">Open deposit wallet →</button>
+
       <h2>Broadcast</h2>
       <p class="sub">Sent to every user who hasn't been banned. HTML formatting works.</p>
       <textarea id="bc" placeholder="Fresh stock just landed — 20% off today."></textarea>
@@ -731,6 +745,7 @@ function moreView() {
           </div>`).join('')}`).join('')}
       <button class="ghost" id="saveMsgs">Save messages</button>`);
 
+    on('#walletbtn', 'click', () => { haptic(); walletView(); });
     on('#send', 'click', (e) => {
       const text = view.querySelector('#bc').value.trim();
       if (!text) return toast('Write the message first', 'err');
