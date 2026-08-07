@@ -853,7 +853,7 @@ async def deposit_rail(c: CallbackQuery, state: FSMContext):
     await state.update_data(dep_code=code)
     unit = prov.quote(1)[1]
     await show(c,
-               f"{prov.title} <b>(Auto-Verify)</b>\n\n"
+               f"{flair.rail_title(code, prov.title)} <b>(Auto-Verify)</b>\n\n"
                f"💱 Enter the amount to deposit in <b>{esc(unit)}</b> "
                f"(example: <code>10</code>).\n"
                f"<i>Minimum: {cfg.money(cfg.min_deposit)}</i>\n\n"
@@ -910,7 +910,7 @@ async def deposit_amount(c: CallbackQuery, state: FSMContext):
     foreign = unit.upper() != cfg.fiat.upper() and rate > 0
     note = (f"\n\n<i>Credited to your wallet in {cfg.fiat} — "
             f"{symbol}{rate:,.0f} is about {cfg.money(1)}.</i>" if foreign else "")
-    await show(c, f"{prov.title if prov else 'Deposit'}\n\n"
+    await show(c, f"{flair.rail_title(code, prov.title) if prov else 'Deposit'}\n\n"
                   f"How much would you like to add?\n"
                   f"Choose or type an amount in <b>{esc(unit)}</b>.{note}",
                k.deposit_amount_kb(code, unit, rate, symbol))
