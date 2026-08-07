@@ -1075,6 +1075,24 @@ def _page(name: str):
 
 
 @web.middleware
+async def no_stale_ui(request, handler):
+    """Stop browsers serving a stale panel.
+
+    The admin screens are a single HTML file with the JavaScript inline, so a
+    cached copy means a deployed change is invisible until the person happens
+    to hard-refresh — which has cost more debugging time this project than any
+    actual bug. Revalidate every time; these files are small.
+    """
+    resp = await handler(request)
+    try:
+        if request.path.startswith("/static/") or request.path in ("/", "/admin"):
+            resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    except AttributeError:
+        pass
+    return resp
+
+
+@web.middleware
 async def maintenance_gate(request, handler):
     """Close the Mini App too while maintenance is on.
 
@@ -1126,7 +1144,7 @@ async def json_errors(request, handler):
 
 def build_app(bot: Bot) -> web.Application:
     # auth first: the maintenance gate needs request["uid"] to spot an admin
-    app = web.Application(middlewares=[json_errors, api_rate_limit,
+    app = web.Application(middlewares=[no_stale_ui, json_errors, api_rate_limit,
                                        auth_middleware, maintenance_gate])
     app["bot"] = bot
     r = app.router
