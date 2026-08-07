@@ -145,7 +145,9 @@ async def deliver(bot: Bot, oid: int) -> bool:
             return False
 
     body = "\n".join(payloads)
-    await db.set_order(oid, status="delivered", delivered_text=body)
+    # snapshot the cost price so profit history stays true when it later changes
+    await db.set_order(oid, status="delivered", delivered_text=body,
+                       unit_cost=float(p["cost"] or 0) if "cost" in p.keys() else 0)
     await db.ex("UPDATE products SET sold_count = sold_count + ? WHERE id = ?", (o["qty"], p["id"]))
 
     full = round(float(o["amount"] or 0) + float(o["balance_used"] or 0), 2)

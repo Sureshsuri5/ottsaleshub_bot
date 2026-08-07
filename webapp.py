@@ -515,7 +515,7 @@ async def adm_product_create(request):
 
 
 ALLOWED_FIELDS = {"name", "description", "price", "is_active", "infinite", "static_payload",
-                  "category_id", "emoji", "icon_emoji_id", "unit", "note"}
+                  "category_id", "emoji", "icon_emoji_id", "unit", "note", "cost"}
 
 
 async def adm_product_update(request):
@@ -646,6 +646,12 @@ async def adm_order(request):
     d["currency"] = cfg.symbol
     import payments
     d["explorer"] = payments.explorer_url(o["provider"], o["external_ref"] or "")
+    return web.json_response(d)
+
+
+async def adm_profit(request):
+    d = await db.profit()
+    d["currency"] = cfg.symbol
     return web.json_response(d)
 
 
@@ -1178,6 +1184,7 @@ def build_app(bot: Bot) -> web.Application:
     r.add_post("/api/admin/withdrawals", adm_withdrawals)
     r.add_post("/api/terms", api_terms_accept)
     r.add_get("/api/admin/order", adm_order)
+    r.add_get("/api/admin/profit", adm_profit)
     r.add_get("/api/admin/dashboard", adm_dashboard)
     r.add_get("/api/admin/wallet", adm_wallet)
     r.add_post("/api/admin/wallet/hide", adm_wallet_hide)

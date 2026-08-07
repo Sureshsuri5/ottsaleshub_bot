@@ -1217,6 +1217,8 @@ async def prod_edit(c: CallbackQuery, state: FSMContext):
     await state.update_data(field=field, pid=int(pid))
     hint = {
         "emoji": "Send one plain emoji to show before the product name (e.g. 🎬).",
+        "cost": ("What one unit costs you. Used for profit reporting only — "
+                 "buyers never see it. Send <code>0</code> to clear."),
         "note": ("Conditions shown under the description — warranty, region "
                  "limits, anything they should read before paying. Send "
                  "<code>-</code> to clear it.\n\n"
@@ -1233,7 +1235,7 @@ async def prod_edit(c: CallbackQuery, state: FSMContext):
 
 
 EDITABLE = {"name", "description", "price", "emoji", "icon_emoji_id",
-            "unit", "note"}
+            "unit", "note", "cost"}
 
 
 @router.message(A.edit_value)
@@ -1259,7 +1261,7 @@ async def prod_edit_save(m: Message, state: FSMContext):
         if value and not str(value).isdigit():
             return await m.answer("Send the numeric id, or just send the premium emoji "
                                   "itself.", reply_markup=_cancel_kb())
-    if d["field"] == "price":
+    if d["field"] in ("price", "cost"):
         try:
             value = round(float(str(value).replace(",", "")), 2)
         except ValueError:

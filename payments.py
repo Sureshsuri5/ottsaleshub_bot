@@ -1244,6 +1244,7 @@ class BinancePayProvider:
         self.code = code
         self.title = spec["title"]
         self.heading = spec["heading"]
+        self._geo_blocked = False
         self.label = spec["label"]
         self.unit = cfg.fiat
 
@@ -1316,6 +1317,20 @@ class BinancePayProvider:
             log.warning("binance request failed: %s", e)
             return None
         if isinstance(data, dict) and data.get("code") not in (None, "000000", 200):
+            msg = str(data.get("msg", data))
+            # Geo-blocking isn't a transient fault: Binance refuses this host's
+            # region outright, and it will refuse it on every poll for as long
+            # as the service lives there. Say so once, clearly, then stop
+            # asking — the rail still works, it just needs manual approval.
+            if "restricted location" in msg.lower() or "eligibility" in msg.lower():
+                if not self._geo_blocked:
+                    self._geo_blocked = True
+                    log.error(
+                        "Binance refuses API access from this server's region. "
+                        "Automatic verification is off; Binance Pay orders now "
+                        "need manual approval. Move the service to a region "
+                        "Binance serves to restore it.")
+                return None
             log.warning("binance API error: %s", data)
             return None
         return data

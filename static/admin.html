@@ -122,8 +122,10 @@ function homeView() {
     html(`
       <h1>Today</h1>
       <p class="sub">${esc(me.shop)}</p>
-      <button id="dashbtn" class="ghost" style="margin-bottom:12px">
+      <button id="dashbtn" class="ghost" style="margin-bottom:8px">
         Dashboard — revenue, most sold, top buyers →</button>
+      <button id="profitbtn" class="ghost" style="margin-bottom:12px">
+        Profit — revenue minus cost price →</button>
 
       <div class="card">
         <div class="tiny muted">Revenue today</div>
@@ -176,6 +178,7 @@ function homeView() {
           ${gauge(p.c, 0, threshold)}
         </div>`).join('')}` : ''}`);
     on('#dashbtn', 'click', () => { haptic(); dashView(); });
+    on('#profitbtn', 'click', () => { haptic(); profitView(); });
     view.querySelector('[data-go="wd"]')?.addEventListener('click', withdrawalsView);
     view.querySelector('[data-go="reviews"]')?.addEventListener('click',
       () => ordersView('open'));
@@ -617,6 +620,43 @@ function userView(uid) {
 
 /* ------------------------------------------------------------------- more */
 let walletShowAll = false;
+
+function profitView() {
+  pushScreen(async () => {
+    const d = await api('/admin/profit');
+    const money = (n) => `${d.currency || ''}${Number(n || 0).toFixed(2)}`;
+    const win = (k, label) => `
+      <div><span>${label}</span><b>${money(d.windows[k].profit)}</b>
+        <span class="muted small">${money(d.windows[k].revenue)} in ·
+          ${money(d.windows[k].cost)} cost · ${d.windows[k].margin}%</span></div>`;
+    html(`
+      <h1>Profit</h1>
+      <p class="sub">Revenue minus cost price, on delivered purchases. Cost is
+        recorded when an order is delivered, so changing a product's cost later
+        won't rewrite past figures.</p>
+      ${d.no_cost ? `<p class="sub">⚠️ ${d.no_cost} active product${
+        d.no_cost === 1 ? ' has' : 's have'} no cost price set — those count as
+        pure profit until you add one.</p>` : ''}
+
+      <div class="dash">
+        ${win('1', 'Last 24 hours')}${win('7', 'Last 7 days')}
+        ${win('30', 'Last 30 days')}${win('all', 'All time')}
+      </div>
+
+      <h2>By product</h2>
+      ${!d.products.length ? '<p class="sub">No delivered sales yet.</p>' : `
+        <div class="wallet">${d.products.map((p) => `
+          <div class="wcard">
+            <div class="wtop"><span class="wname">${esc(p.name || '—')}</span>
+              <span class="wamt">${money(p.profit)}</span></div>
+            <div class="wmeta"><span>${p.units} unit${p.units === 1 ? '' : 's'} ·
+              ${money(p.revenue)} in · ${money(p.cost)} cost</span>
+              <span>${p.margin}%</span></div>
+          </div>`).join('')}</div>`}
+    `);
+  });
+}
+
 
 function dashView() {
   pushScreen(async () => {

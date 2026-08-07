@@ -336,6 +336,11 @@ async def _migrate() -> None:
         # conditions shown under the description — warranty, region limits,
         # anything a buyer should read before paying
         "ALTER TABLE products ADD COLUMN note TEXT NOT NULL DEFAULT ''",
+        # what a unit costs you — used for profit reporting
+        "ALTER TABLE products ADD COLUMN cost REAL NOT NULL DEFAULT 0",
+        # the cost at the moment of sale. Snapshotted so that changing a
+        # product's cost price later doesn't silently rewrite past profit.
+        "ALTER TABLE orders ADD COLUMN unit_cost REAL NOT NULL DEFAULT 0",
         "ALTER TABLE products ADD COLUMN unit TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE users ADD COLUMN notify_orders INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE users ADD COLUMN notify_promos INTEGER NOT NULL DEFAULT 1",
@@ -1111,6 +1116,60 @@ async def set_setting(key: str, value: str) -> None:
 
 
 # ----------------------------------------------------------------- stats
+async def profit(days_list=(1, 7, 30), top: int = 10) -> dict:
+    """Revenue, cost and profit over several windows, and per product.
+
+    Cost comes from the snapshot taken when the order was delivered, falling
+    back to the product's current cost for orders placed before cost tracking
+    existed. Without the snapshot, editing a cost price would rewrite history.
+
+    Revenue is amount + balance_used, as everywhere else: the wallet share of
+    a part-paid order is still money the shop took.
+    """
+    rev = "COALESCE(o.amount, 0) + COALESCE(o.balance_used, 0)"
+    cost = ("o.qty * CASE WHEN COALESCE(o.unit_cost, 0) > 0 "
+            "THEN o.unit_cost ELSE COALESCE(p.cost, 0) END")
+    base = ("FROM orders o LEFT JOIN products p ON p.id = o.product_id "
+            "WHERE o.status = 'delivered' AND o.kind = 'purchase'")
+
+    parts, args = [], []
+    for d in days_list:
+        parts += [f"(SELECT COALESCE(SUM({rev}),0) {base} "
+                  f"AND COALESCE(o.paid_at, o.created_at) > datetime('now', ?)) r{d}",
+                  f"(SELECT COALESCE(SUM({cost}),0) {base} "
+                  f"AND COALESCE(o.paid_at, o.created_at) > datetime('now', ?)) c{d}"]
+        args += [f"-{d} days", f"-{d} days"]
+    parts += [f"(SELECT COALESCE(SUM({rev}),0) {base}) rall",
+              f"(SELECT COALESCE(SUM({cost}),0) {base}) call"]
+    row = await q1("SELECT " + ", ".join(parts), args)
+
+    def win(rk, ck):
+        r, c = round(float(row[rk] or 0), 2), round(float(row[ck] or 0), 2)
+        return {"revenue": r, "cost": c, "profit": round(r - c, 2),
+                "margin": round((r - c) / r * 100) if r else 0}
+
+    windows = {str(d): win(f"r{d}", f"c{d}") for d in days_list}
+    windows["all"] = win("rall", "call")
+
+    rows = await q(
+        f"SELECT o.product_name name, SUM(o.qty) units, "
+        f"COALESCE(SUM({rev}),0) revenue, COALESCE(SUM({cost}),0) cost "
+        f"{base} GROUP BY o.product_name "
+        f"ORDER BY (COALESCE(SUM({rev}),0) - COALESCE(SUM({cost}),0)) DESC LIMIT ?",
+        (top,))
+    products = []
+    for r in rows:
+        rv, cs = round(float(r["revenue"] or 0), 2), round(float(r["cost"] or 0), 2)
+        products.append({"name": r["name"], "units": r["units"],
+                         "revenue": rv, "cost": cs,
+                         "profit": round(rv - cs, 2),
+                         "margin": round((rv - cs) / rv * 100) if rv else 0})
+    missing = await q1(
+        "SELECT COUNT(*) c FROM products WHERE is_active = 1 AND COALESCE(cost,0) = 0")
+    return {"windows": windows, "products": products,
+            "no_cost": int(missing["c"]) if missing else 0}
+
+
 async def order_counts() -> dict:
     """How many orders sit under each Orders filter, in one query."""
     r = await q1(
