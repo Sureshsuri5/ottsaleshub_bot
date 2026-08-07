@@ -412,6 +412,17 @@ class EvmTokenProvider:
                 # that nothing can attribute. Better to fail the checkout.
                 log.error("could not derive a deposit address: %s", e)
                 raise
+        if not addr and await db.setting("hd:next_index", "0") not in ("", "0"):
+            # This shop has issued derived addresses before and now can't. The
+            # xpub has been cleared, mistyped, or bip_utils is missing after a
+            # failed build. Quietly reverting to one shared address would bring
+            # back the collision this design exists to prevent — and nobody
+            # would notice until two buyers paid the same amount.
+            log.error("per-order addresses were in use but the wallet is "
+                      "unavailable (%s) — refusing checkout", hdwallet.problem())
+            raise RuntimeError(
+                "Crypto checkout is temporarily unavailable. Please use another "
+                "payment method or try again shortly.")
         addr = addr or cfg.evm_address
         net = self.network
         tokens = "USDT / USDC" if len(self.contracts) > 1 else self.unit

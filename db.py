@@ -1171,11 +1171,16 @@ async def stats() -> dict:
     users = (await one("SELECT COUNT(*) c FROM users"))["c"]
     banned = (await one("SELECT COUNT(*) c FROM users WHERE is_banned = 1"))["c"]
     orders_total = (await one("SELECT COUNT(*) c FROM orders WHERE status = 'delivered'"))["c"]
+    # amount + balance_used, matching dashboard(). Summing amount alone counts
+    # only the part paid on the rail, so every order part-paid from wallet was
+    # under-reported by exactly the wallet share — and the two screens
+    # disagreed about the same sale.
+    money = "COALESCE(SUM(COALESCE(amount, 0) + COALESCE(balance_used, 0)), 0)"
     rev_all = (await one(
-        "SELECT COALESCE(SUM(amount), 0) s FROM orders "
+        f"SELECT {money} s FROM orders "
         "WHERE status = 'delivered' AND kind = 'purchase'"))["s"]
     rev_today = (await one(
-        "SELECT COALESCE(SUM(amount), 0) s FROM orders WHERE status = 'delivered' "
+        f"SELECT {money} s FROM orders WHERE status = 'delivered' "
         "AND kind = 'purchase' "
         "AND substr(paid_at, 1, 10) = substr(datetime('now'), 1, 10)"))["s"]
     pending = (await one("SELECT COUNT(*) c FROM orders WHERE status IN ('pending','awaiting_review')"))["c"]
@@ -1250,8 +1255,9 @@ async def list_users(term: str = "", limit: int = 50, offset: int = 0):
 
 
 async def user_summary(tg_id: int) -> dict:
-    r = await q1("SELECT COUNT(*) c, COALESCE(SUM(amount),0) s FROM orders "
-                 "WHERE user_id = ? AND status = 'delivered'", (tg_id,))
+    r = await q1("SELECT COUNT(*) c, "
+                 "COALESCE(SUM(COALESCE(amount,0) + COALESCE(balance_used,0)),0) s "
+                 "FROM orders WHERE user_id = ? AND status = 'delivered'", (tg_id,))
     return {"orders": r["c"], "spent": r["s"]}
 
 
@@ -1267,7 +1273,8 @@ async def catalog() -> list[dict]:
 
 async def revenue_series(days: int = 14) -> list[dict]:
     rows = await q(
-        "SELECT substr(paid_at, 1, 10) d, COALESCE(SUM(amount),0) s, COUNT(*) n "
+        "SELECT substr(paid_at, 1, 10) d, "
+        "COALESCE(SUM(COALESCE(amount,0) + COALESCE(balance_used,0)),0) s, COUNT(*) n "
         "FROM orders WHERE status = 'delivered' AND kind = 'purchase' "
         "AND paid_at IS NOT NULL "
         "AND substr(paid_at, 1, 10) >= substr(datetime('now', ?), 1, 10) "
