@@ -37,8 +37,16 @@ STOP = {
     "pro", "premium", "plus", "max", "ultra", "new", "old", "month", "months",
     "year", "years", "day", "days", "acc", "account", "accounts", "key", "keys",
     "ai", "app", "apps", "id", "ids",
+    # two-letter noise, now that tokens that short are considered at all
+    "is", "in", "it", "of", "on", "or", "to", "up", "we", "me", "my", "so",
+    "at", "be", "by", "do", "go", "if", "no", "ok", "hi",
 }
-MIN_TOKEN = 3
+# Two, not three: short names are often the distinctive part — "tv" is the
+# only thing separating Apple TV from Apple Music, and dropping it made every
+# Apple product match equally. Noise at this length is handled by STOP above,
+# which is a list that can be corrected; a length rule can't tell "tv" from
+# "is".
+MIN_TOKEN = 2
 
 
 def esc(s) -> str:
@@ -73,11 +81,25 @@ def match_products(text: str, products) -> list:
     said = set(words) - STOP
     if not said:
         return []
-    scored = []
+    hits = []
     for p in products:
         overlap = said & product_tokens(p)
-        if not overlap:
-            continue
+        if overlap:
+            hits.append((overlap, p))
+
+    # "apple tv" matches Apple TV on {apple, tv} and Apple Music on {apple}
+    # alone. The second is riding on a word the first already accounts for, so
+    # it isn't a separate thing the buyer asked about — drop any match whose
+    # words are wholly contained in another's.
+    #
+    # Deliberately not "keep only the strongest": someone asking for
+    # "gemini, notion and google" names three products with no shared words,
+    # and all three must survive.
+    kept = [(o, p) for o, p in hits
+            if not any(o < other for other, _ in hits)]
+
+    scored = []
+    for overlap, p in kept:
         first = min(words.index(w) for w in overlap)
         scored.append((first, -len(overlap), len(p["name"]), p))
     scored.sort(key=lambda t: t[:3])
