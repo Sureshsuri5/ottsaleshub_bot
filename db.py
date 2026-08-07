@@ -1139,7 +1139,10 @@ async def dashboard(days_list=(1, 7, 30), top: int = 5) -> dict:
         f"SUM(o.qty) units, {money.replace('amount', 'o.amount').replace('balance_used', 'o.balance_used')} spent "
         f"FROM orders o LEFT JOIN users u ON u.tg_id = o.user_id "
         f"WHERE o.status = 'delivered' AND o.kind = 'purchase' "
-        f"GROUP BY o.user_id ORDER BY spent DESC LIMIT ?", (top,))
+        # every selected column has to be grouped or aggregated: SQLite is
+        # relaxed about this, Postgres raises GroupingError
+        f"GROUP BY o.user_id, u.username, u.first_name "
+        f"ORDER BY spent DESC LIMIT ?", (top,))
     return {
         "revenue": revenue,
         "products": [dict(r) for r in products],
