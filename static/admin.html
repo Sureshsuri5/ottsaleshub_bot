@@ -872,10 +872,8 @@ function moreView() {
       <textarea id="bc" placeholder="Fresh stock just landed — 20% off today."></textarea>
       <button id="send" style="margin-top:8px">Send broadcast</button>
 
-      <h2>Sales feed</h2>
-      <p class="sub">Posts every sale to a group. The buyer's name, username and id never
-        leave the bot — only a hashed tag, so repeat buyers look consistent without being
-        identifiable.</p>
+      <h2>Shop status</h2>
+      <p class="sub">Switches that change what buyers can reach right now.</p>
       <label class="row" style="justify-content:space-between">
         <span><b>Maintenance mode</b><br>
           <i class="muted">Closes the shop for everyone but admins. Payments
@@ -898,7 +896,8 @@ function moreView() {
         <input type="checkbox" id="menubtn" ${f.menu_button ? 'checked' : ''}>
       </label>
 
-      <label>Payment methods</label>
+
+      <h2>Payment methods</h2>
       <p class="sub" style="margin-top:0">Switch a rail off to hide it from
         buyers and stop polling it. Wallet balance can't be switched off —
         it's where deposits land. A rail marked <i>not configured</i> stays
@@ -923,9 +922,16 @@ function moreView() {
           </label>` : ''}`).join('')}
       </div>
 
-      <label>Group or channel id</label>
+
+      <h2>Sales feed &amp; announcements</h2>
+      <p class="sub">Where the bot posts to your group. The buyer's name,
+        username and id never leave the bot — only a hashed tag, so repeat
+        buyers look consistent without being identifiable.</p>
+      <label>Sales feed group</label>
+      <p class="sub" style="margin-top:0">A post for every sale. Leave blank to
+        switch the feed off.</p>
       <input id="feed" placeholder="-1001234567890" value="${esc(f.sales_chat)}">
-      <label>Restock &amp; new product announcements</label>
+      <label>Announcements group</label>
       <input id="restock" placeholder="same as above"
              value="${esc(f.restock_chat || '')}">
       <p class="sub" style="margin-top:6px">Where "new product" and "back in
