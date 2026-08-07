@@ -187,9 +187,21 @@ async def deliver(bot: Bot, oid: int) -> bool:
 
     if not p["infinite"]:
         left = await db.stock_count(p["id"])
-        if left <= cfg.low_stock:
-            await notify_admins(bot, f"⚠️ Low stock: <b>{p['name']}</b> — {left} left",
-                                skip=o["user_id"])
+        before = left + (o["qty"] or 0)
+        # Only on the way past the line, not on every sale below it. Selling
+        # five units one at a time used to send five identical warnings, which
+        # is how an alert stops being read. Zero always warns — running out is
+        # a different event from getting low.
+        crossed = before > cfg.low_stock >= left
+        if left == 0 and before > 0:
+            await notify_admins(
+                bot, f"🚫 <b>Out of stock</b>: {flair.product_tag(p)}\n"
+                     f"<i>Buyers can still join the restock waitlist.</i>",
+                skip=o["user_id"])
+        elif crossed:
+            await notify_admins(
+                bot, f"⚠️ <b>Low stock</b>: {flair.product_tag(p)} — "
+                     f"<b>{left}</b> left", skip=o["user_id"])
     return True
 
 

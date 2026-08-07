@@ -173,7 +173,7 @@ class Config:
     # cost. 0 disables the fast lane.
     fast_interval: int = int(os.getenv("FAST_POLL_SECONDS", "4"))
     fast_window: int = int(os.getenv("FAST_POLL_MINUTES", "10"))
-    low_stock: int = int(os.getenv("LOW_STOCK_ALERT", "3"))
+    low_stock: int = int(os.getenv("LOW_STOCK_ALERT", "5"))
 
     @property
     def upi_rate(self) -> float:
