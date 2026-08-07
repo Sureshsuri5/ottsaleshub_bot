@@ -711,8 +711,13 @@ async def adm_wallet(request):
 
     hidden = {a for a in (await db.setting("wallet:hidden", "")).split(",") if a}
     show_all = request.query.get("all") == "1"
+    # Only seed-derived accounts. EVM_ADDRESS is the shop's main wallet — the
+    # destination swept funds are collected to — so its balance is a mix of
+    # already-collected money and old pre-derivation orders. Reporting it here
+    # would invite counting the same income twice.
     out = [e for e in acc.values()
-           if show_all or e["address"].lower() not in hidden]
+           if e["index"] is not None
+           and (show_all or e["address"].lower() not in hidden)]
     out = sorted(out, key=lambda e: (e["index"] is None, e["index"] or 0))
     for e in out:
         e["hidden"] = e["address"].lower() in hidden
