@@ -100,7 +100,7 @@ function homeView() {
       <h1>Today</h1>
       <p class="sub">${esc(me.shop)}</p>
       <button id="dashbtn" class="ghost" style="margin-bottom:12px">
-        Dashboard — revenue, best sellers, top buyers →</button>
+        Dashboard — revenue, most sold, top buyers →</button>
 
       <div class="card">
         <div class="tiny muted">Revenue today</div>
@@ -417,6 +417,12 @@ function ordersView(filter = 'open') {
            checkout.</div>`}`);
 
     view.querySelectorAll('[data-f]').forEach((b) => b.onclick = () => ordersView(b.dataset.f));
+    view.querySelectorAll('[data-open]').forEach((c) => c.onclick = (e) => {
+      // the approve/reject buttons live inside the card; a tap on one of those
+      // must not also open the order
+      if (e.target.closest('[data-act]')) return;
+      haptic(); orderView(c.dataset.open);
+    });
     view.querySelectorAll('[data-act]').forEach((b) => b.onclick = async () => {
       b.disabled = true;
       try {
@@ -430,8 +436,58 @@ function ordersView(filter = 'open') {
   });
 }
 
+function orderView(id) {
+  pushScreen(async () => {
+    const o = await api('/admin/order?id=' + encodeURIComponent(id));
+    const m = (n) => `${o.currency || ''}${Number(n || 0).toFixed(2)}`;
+    const row = (k, v) => v === null || v === undefined || v === ''
+      ? '' : `<div class="wmeta" style="justify-content:space-between">
+                <span>${k}</span><span>${v}</span></div>`;
+    html(`
+      <h1>Order #${esc(o.code || o.id)}</h1>
+      <div class="wcard">
+        <div class="wtop"><span class="wname">${esc(o.product_name || '—')}
+          <span class="muted small">×${o.qty}</span></span>
+          <span class="wamt">${m(o.amount)}</span></div>
+        <div style="margin-top:8px">${statusPill(o.status)}</div>
+      </div>
+
+      <h2>Details</h2>
+      <div class="wcard">
+        ${row('Order id', '#' + o.id)}
+        ${row('Buyer', o.username ? '@' + esc(o.username)
+                                  : esc(o.first_name || o.user_id))}
+        ${row('User id', `<code class="small">${o.user_id}</code>`)}
+        ${row('Method', esc(o.provider))}
+        ${row('Paid from wallet', o.balance_used > 0 ? m(o.balance_used) : '')}
+        ${row('Received', o.received > 0 ? m(o.received) : '')}
+        ${row('Created', esc(o.created_at || ''))}
+        ${row('Paid', esc(o.paid_at || ''))}
+      </div>
+
+      ${o.external_ref ? `
+        <h2>Payment reference</h2>
+        <div class="wcard">
+          <code class="waddr">${esc(o.external_ref)}</code>
+          ${o.explorer ? `<div class="wmeta"><span></span>
+            <a target="_blank" href="${esc(o.explorer)}">View on explorer ↗</a></div>` : ''}
+        </div>` : ''}
+
+      ${o.pay_address ? `
+        <h2>Deposit address</h2>
+        <div class="wcard"><code class="waddr">${esc(o.pay_address)}</code></div>` : ''}
+
+      <h2>Delivered items</h2>
+      ${!o.items.length ? '<p class="sub">Nothing delivered for this order.</p>' : `
+        <div class="wcard">${o.items.map((it, i) =>
+          `<div class="waddr">${i + 1}. ${esc(it)}</div>`).join('')}</div>`}
+    `);
+  });
+}
+
+
 const orderCard = (o) => `
-  <div class="card">
+  <div class="card" data-open="${o.id}">
     <div class="between">
       <div class="grow trunc"><b>${esc(o.product_name)}</b>
         <span class="muted small num"> ×${o.qty}</span></div>
@@ -544,7 +600,7 @@ function dashView() {
         ${win('30', 'Last 30 days')}${win('all', 'All time')}
       </div>
 
-      <h2>Best sellers</h2>
+      <h2>Most sold</h2>
       ${!d.products.length ? '<p class="sub">No sales yet.</p>' : `
         <div class="wallet">${d.products.map((p, i) => `
           <div class="wcard"><div class="wtop">

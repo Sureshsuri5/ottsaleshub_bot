@@ -594,6 +594,32 @@ async def adm_withdrawals(request):
     return web.json_response({"pending": out})
 
 
+async def adm_order(request):
+    """Everything about one order, including what was delivered.
+
+    The list can only show a truncated reference and no items at all — this is
+    where you look when a buyer asks what they were sent, or when you need the
+    full transaction hash to check on-chain.
+    """
+    try:
+        oid = int(request.query.get("id", "0"))
+    except ValueError:
+        oid = 0
+    o = await db.order(oid)
+    if not o:
+        return web.json_response({"error": "No such order."}, status=404)
+    u = await db.get_user(o["user_id"])
+    d = dict(o)
+    d["items"] = [ln for ln in (o["delivered_text"] or "").split("\n") if ln.strip()]
+    d["username"] = u["username"] if u else None
+    d["first_name"] = u["first_name"] if u else None
+    d["balance"] = float(u["balance"]) if u else 0.0
+    d["currency"] = cfg.symbol
+    import payments
+    d["explorer"] = payments.explorer_url(o["provider"], o["external_ref"] or "")
+    return web.json_response(d)
+
+
 async def adm_dashboard(request):
     d = await db.dashboard()
     d["currency"] = cfg.symbol
@@ -1116,6 +1142,7 @@ def build_app(bot: Bot) -> web.Application:
     r.add_get("/api/admin/withdrawals", adm_withdrawals)
     r.add_post("/api/admin/withdrawals", adm_withdrawals)
     r.add_post("/api/terms", api_terms_accept)
+    r.add_get("/api/admin/order", adm_order)
     r.add_get("/api/admin/dashboard", adm_dashboard)
     r.add_get("/api/admin/wallet", adm_wallet)
     r.add_post("/api/admin/wallet/hide", adm_wallet_hide)
