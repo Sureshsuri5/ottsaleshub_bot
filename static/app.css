@@ -405,3 +405,46 @@ img.brandmark { object-fit: cover; }
    the line breaks have to survive into the web view. */
 .card.pre { white-space: pre-wrap; line-height: 1.5; }
 .card.note { border-left: 3px solid var(--amber, #f5a524); }
+
+/* Refresh stock: sky blue, distinct from the accent used by Buy so the two
+   never read as the same kind of action. */
+.sky {
+  background: #38bdf8; color: #05202e; border: none; font-weight: 600;
+}
+.sky:hover { background: #7dd3fc; }
+.sky:active { background: #0ea5e9; }
+
+/* ---- topbar controls -------------------------------------------------
+   Support, notifications and sign-in sat on a border so faint it read as no
+   border at all against the dark hero, leaving three icons floating. A
+   defined edge and a consistent hit area make them look like the controls
+   they are. */
+.topbar .chip {
+  border-color: color-mix(in srgb, var(--text) 22%, transparent);
+  background: color-mix(in srgb, var(--panel) 92%, var(--text) 8%);
+  color: var(--text);
+}
+.topbar .chip:hover {
+  border-color: color-mix(in srgb, var(--text) 38%, transparent);
+}
+/* square-ish icon buttons, matched height with the sign-in chip */
+.topbar .chip.ico {
+  width: 34px; height: 34px; padding: 0;
+  justify-content: center; font-size: 15px;
+}
+.topbar .chip.solid {
+  height: 34px; padding: 0 14px;
+  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  color: var(--text);
+}
+.topbar .chip.solid:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 24%, var(--panel));
+}
+/* the currency switch keeps its own inner styling — don't give its children
+   a second border inside the pill they already sit in */
+.topbar .switch .chip { border-color: transparent; background: none; }
+.topbar .switch .chip.on {
+  background: var(--accent); color: var(--on-accent);
+}

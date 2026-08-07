@@ -197,7 +197,7 @@ async function shopView() {
       ${shown.length
         ? `<div class="grid">${shown.map(productCard).join('')}</div>`
         : `<div class="empty"><b>Nothing found</b>Try a different search.</div>`}
-      <button class="ghost" id="refresh">🔄 Refresh stock</button>`);
+      <button class="sky" id="refresh">🔄 Refresh stock</button>`);
 
     bindTopbar();
     view.querySelectorAll('[data-p]').forEach((el) => {
