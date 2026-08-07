@@ -526,6 +526,25 @@ async def style_demo(bot: Bot, chat_id: int) -> str:
 DEFAULT_SALE_TEMPLATE = "{{sale}} Someone just bought {qty}× {product}!"
 
 
+def product_icon(product) -> str:
+    """A product's own emoji — premium when one is set, plain otherwise.
+
+    One helper so the same product looks the same in the shop list, on its
+    page, in the order summary and on the receipt. Anywhere this returns a
+    <tg-emoji> tag, the message must be sent as HTML.
+    """
+    if product is None:
+        return ""
+    try:
+        icon = icon_id(product["icon_emoji_id"])
+    except (KeyError, IndexError, TypeError):
+        icon = ""
+    plain = (product["emoji"] or "").strip()
+    if icon:
+        return f'<tg-emoji emoji-id="{icon}">{plain or "🛍"}</tg-emoji>'
+    return plain
+
+
 def product_tag(product) -> str:
     """Product name with its own emoji, as a premium emoji when one is set."""
     if product is None:

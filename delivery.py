@@ -127,7 +127,8 @@ async def deliver(bot: Bot, oid: int) -> bool:
         # error in the arithmetic
         balance=cfg.money(max(0.0, round(paid - float(o["amount"] or 0), 2))),
         wallet=cfg.money(buyer["balance"] if buyer else 0),
-        product=_esc(p["name"]) if p else "—",
+        product=(f"{flair.product_icon(p)} {_esc(p['name'])}".strip()
+                 if p else "—"),
         qty=o["qty"], oid=o["code"] or oid))
 
     if p is None:
@@ -149,7 +150,7 @@ async def deliver(bot: Bot, oid: int) -> bool:
     full = round(float(o["amount"] or 0) + float(o["balance_used"] or 0), 2)
     header = await texts.t("delivered_body", oid=o["code"] or oid,
                            product=_esc(p["name"]), qty=o["qty"],
-                           emoji=p["emoji"] or "",
+                           emoji=flair.product_icon(p),
                            amount=cfg.money(full), method=_esc(o["provider"]),
                            date=timefmt.local_dt(o["paid_at"] or o["created_at"]),
                            **await _tx_fields(o, short=False))

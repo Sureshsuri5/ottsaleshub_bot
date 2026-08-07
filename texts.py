@@ -179,7 +179,7 @@ MESSAGES: dict[str, Msg] = {
         "{{m_ok}} <b>Order Successful!</b>\n\n"
         "🧾 Order: <b>#{oid}</b>\n"
         "📅 Date: <b>{date}</b>\n"
-        "Product: <b>{product}</b>\n"
+        "Product: {emoji} <b>{product}</b>\n"
         "Quantity: <b>{qty}</b>\n"
         "Total: <b>{amount}</b>"
         "{tx_line}\n\n"

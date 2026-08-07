@@ -71,8 +71,12 @@ def with_data(c, data: str):
 
 
 def name_of(p) -> str:
-    """Product title with its emoji, without a stray space when there isn't one."""
-    emoji = (p["emoji"] or "").strip()
+    """Product title with its emoji, without a stray space when there isn't one.
+
+    Uses the premium icon when the product has one, so the name reads the same
+    on its page, in the order summary, on the payment screen and in My Orders.
+    """
+    emoji = flair.product_icon(p)
     return f"{emoji} {esc(p['name'])}" if emoji else esc(p["name"])
 
 
