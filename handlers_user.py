@@ -301,16 +301,35 @@ async def product_text(p, uid: int) -> str:
     price = await pricing.price_for(p, uid)
     tier = await pricing.label(uid)
 
-    line = await texts.t("product_price", price=cfg.money(price),
+    saved = p["price"] - price
+    discounted = tier and saved > 1e-9
+    # With a personal price the two figures are shown as a pair — list price
+    # above, theirs below — which reads better than one number struck through.
+    # Without a tier the shop's own sale price keeps the strikethrough.
+    line = await texts.t("product_price",
+                         price=cfg.money(p["price"] if discounted else price),
                          unit=f" / {esc(unit)}" if unit else "")
-    if price < p["price"] - 1e-9:
+    if not discounted and saved > 1e-9:
         line += await texts.t("product_was", was=cfg.money(p["price"]))
     lines = [f"<b>{name_of(p)}</b>", "", line]
     if tier:
-        lines.append(await texts.t("product_tier", tier=esc(tier)))
+        off = (f" — <b>{round(saved / p['price'] * 100)}% off</b>"
+               if p["price"] > 0 and saved > 1e-9 else "")
+        lines.append(await texts.t("product_tier", price=cfg.money(price),
+                                   off=off, tier=esc(tier)))
     if p["description"].strip():
-        lines += ["", await texts.t("product_desc",
-                                    description=esc(p["description"]))]
+        # rendered, not just escaped: t() expands {{...}} before substituting
+        # values, so a premium emoji written in the description would otherwise
+        # arrive too late to be expanded
+        # not escaped: the description is admin-authored HTML (bold, links,
+        # premium emoji tokens), and escaping it would print the tags
+        lines += ["", await texts.t(
+            "product_desc",
+            description=await flair.render(p["description"].strip()))]
+    note = (p["note"] or "").strip() if "note" in p.keys() else ""
+    if note:
+        lines += ["", await texts.t("product_note",
+                                    note=await flair.render(note))]
 
     # stock is already on every row of the list, so only mention it when it
     # changes what the buyer can do right now

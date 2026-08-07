@@ -1217,6 +1217,12 @@ async def prod_edit(c: CallbackQuery, state: FSMContext):
     await state.update_data(field=field, pid=int(pid))
     hint = {
         "emoji": "Send one plain emoji to show before the product name (e.g. 🎬).",
+        "note": ("Conditions shown under the description — warranty, region "
+                 "limits, anything they should read before paying. Send "
+                 "<code>-</code> to clear it.\n\n"
+                 "Premium emoji work here: paste one and it is stored as "
+                 "<code>{{e:id:fallback}}</code> so it survives being copied "
+                 "and edited."),
         "icon_emoji_id": "Send the premium emoji itself, or paste its numeric id. "
                          "Use /ids if you need to look one up.",
         "unit": "What one unit is called — shows as <i>Price: ₹99 / code</i>. "
@@ -1226,7 +1232,8 @@ async def prod_edit(c: CallbackQuery, state: FSMContext):
     await c.answer()
 
 
-EDITABLE = {"name", "description", "price", "emoji", "icon_emoji_id", "unit"}
+EDITABLE = {"name", "description", "price", "emoji", "icon_emoji_id",
+            "unit", "note"}
 
 
 @router.message(A.edit_value)
@@ -1236,6 +1243,13 @@ async def prod_edit_save(m: Message, state: FSMContext):
         await state.clear()
         return await m.answer("That field can't be edited here.")
     value: object = m.text.strip()
+    if d["field"] in {"description", "note"}:
+        # Keep the message as the admin wrote it: html_text carries bold,
+        # links and premium emoji, and tokenise() stores the emoji as
+        # {{e:id:fallback}} so they survive being copied out and pasted back.
+        value = flair.tokenise(m.html_text or m.text or "").strip()
+        if value == "-":
+            value = ""
     if d["field"] == "unit" and value == "-":
         value = ""
     if d["field"] == "icon_emoji_id":

@@ -333,6 +333,9 @@ async def _migrate() -> None:
         "ALTER TABLE users ADD COLUMN ref_earned REAL NOT NULL DEFAULT 0",
         "ALTER TABLE products ADD COLUMN emoji TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE products ADD COLUMN icon_emoji_id TEXT NOT NULL DEFAULT ''",
+        # conditions shown under the description — warranty, region limits,
+        # anything a buyer should read before paying
+        "ALTER TABLE products ADD COLUMN note TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE products ADD COLUMN unit TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE users ADD COLUMN notify_orders INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE users ADD COLUMN notify_promos INTEGER NOT NULL DEFAULT 1",

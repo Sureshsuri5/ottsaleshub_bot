@@ -71,11 +71,18 @@ MESSAGES: dict[str, Msg] = {
         " {{pd_was}} <s>{was}</s>",
         "Product: struck-through list price", "Product page", ("was",)),
     "product_tier": Msg(
-        "{{pd_tier}} <i>Your pricing: {tier}</i>",
-        "Product: your tier line", "Product page", ("tier",)),
+        "{{pd_tier}} Your price: <b>{price}</b>{off}",
+        "Product: your tier line", "Product page",
+        # The Price line above already carries the figure, so repeating it here
+        # just made the buyer read the same number twice. {price} and {tier}
+        # are still available if you'd rather show either.
+        ("price", "off", "tier")),
     "product_desc": Msg(
         "{{pd_desc}} <blockquote>{description}</blockquote>",
         "Product: description block", "Product page", ("description",)),
+    "product_note": Msg(
+        "{{m_warn}} <b>Note</b>\n<blockquote>{note}</blockquote>",
+        "Product: conditions / note block", "Product page", ("note",)),
     "product_delivery": Msg(
         "<i>Delivery is automatic after payment confirmation.</i>",
         "Delivery promise on a product", "Shop"),

@@ -471,6 +471,8 @@ def admin_prod_kb(p) -> InlineKeyboardMarkup:
          btn("🔴 Hide" if p["is_active"] else "🟢 Show", f"a:toggle:{p['id']}")],
         [btn("😀 Emoji", f"a:edit:emoji:{p['id']}"),
          btn("✨ Custom icon", f"a:edit:icon_emoji_id:{p['id']}")],
+        [btn("⚠️ Note" + (" ✓" if (p["note"] or "").strip() else ""),
+             f"a:edit:note:{p['id']}")],
         [btn("🏷 Price unit", f"a:edit:unit:{p['id']}"),
          btn("💲 Tier prices", f"a:tprice:{p['id']}")],
         [btn("🔎 Group keywords", f"a:kw:{p['id']}")],

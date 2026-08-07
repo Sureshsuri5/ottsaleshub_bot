@@ -491,7 +491,7 @@ async def adm_product_create(request):
 
 
 ALLOWED_FIELDS = {"name", "description", "price", "is_active", "infinite", "static_payload",
-                  "category_id", "emoji", "icon_emoji_id", "unit"}
+                  "category_id", "emoji", "icon_emoji_id", "unit", "note"}
 
 
 async def adm_product_update(request):
