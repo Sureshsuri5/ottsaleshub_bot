@@ -460,6 +460,7 @@ async def adm_stats(request):
     return web.json_response({
         **await db.stats(),
         "alerts": await db.alert_counts(),
+        "counts": await db.order_counts(),
         "series": await db.revenue_series(14),
         "low": rows(await db.low_stock(cfg.low_stock)),
         "threshold": cfg.low_stock,
@@ -532,9 +533,12 @@ async def adm_stock(request):
 
 async def adm_orders(request):
     status = request.query.get("status", "open")
-    return web.json_response(rows(await db.list_orders(
-        status, int(request.query.get("limit", 60)),
-        term=request.query.get("q", ""))))
+    return web.json_response({
+        "orders": rows(await db.list_orders(
+            status, int(request.query.get("limit", 60)),
+            term=request.query.get("q", ""))),
+        "counts": await db.order_counts(),
+    })
 
 
 async def adm_order_action(request):

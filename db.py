@@ -1111,6 +1111,19 @@ async def set_setting(key: str, value: str) -> None:
 
 
 # ----------------------------------------------------------------- stats
+async def order_counts() -> dict:
+    """How many orders sit under each Orders filter, in one query."""
+    r = await q1(
+        "SELECT "
+        "(SELECT COUNT(*) FROM orders "
+        "  WHERE status IN ('pending','awaiting_review')) open, "
+        "(SELECT COUNT(*) FROM orders WHERE status = 'awaiting_review') review, "
+        "(SELECT COUNT(*) FROM orders WHERE status = 'delivered') delivered, "
+        "(SELECT COUNT(*) FROM orders) all_orders")
+    return {"open": r["open"], "review": r["review"],
+            "delivered": r["delivered"], "all": r["all_orders"]}
+
+
 async def alert_counts() -> dict:
     """Things waiting on an admin right now."""
     r = await q1(

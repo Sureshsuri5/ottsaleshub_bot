@@ -451,3 +451,14 @@ img.brandmark { object-fit: cover; }
 .topbar .switch .chip.on {
   background: var(--accent); color: var(--on-accent);
 }
+
+/* Open-order badge on the Orders tab. Sits on the bottom nav so a waiting
+   order is visible from any screen, not only after opening Orders. */
+.tabs button { position: relative; }
+.tabbadge {
+  position: absolute; top: 2px; left: 50%; margin-left: 6px;
+  min-width: 17px; height: 17px; padding: 0 5px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 999px; background: var(--rose, #f43f5e); color: #fff;
+  font-size: 10.5px; font-weight: 700; line-height: 1;
+}
