@@ -524,7 +524,9 @@ async def adm_stock(request):
 
 async def adm_orders(request):
     status = request.query.get("status", "open")
-    return web.json_response(rows(await db.list_orders(status, int(request.query.get("limit", 60)))))
+    return web.json_response(rows(await db.list_orders(
+        status, int(request.query.get("limit", 60)),
+        term=request.query.get("q", ""))))
 
 
 async def adm_order_action(request):

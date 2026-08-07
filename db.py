@@ -1198,15 +1198,35 @@ async def low_stock(threshold: int):
 
 
 # ------------------------------------------------------ web panel queries
-async def list_orders(status: str | None = None, limit: int = 50, offset: int = 0):
-    sql = "SELECT * FROM orders"
+async def list_orders(status: str | None = None, limit: int = 50, offset: int = 0,
+                      term: str = ""):
+    """Orders, newest first, optionally filtered by status and search term.
+
+    A search ignores the status filter: someone hunting for one order knows
+    what they're looking for, and making them guess which tab it's under is a
+    worse experience than showing it wherever it is.
+
+    The term matches the order code, the row id, the buyer's id, the product
+    name and the payment reference — whichever of those the person happens to
+    have to hand.
+    """
+    term = (term or "").strip().lstrip("#")
     args: list[Any] = []
-    if status and status != "all":
-        if status == "open":
-            sql += " WHERE status IN ('pending','awaiting_review')"
-        else:
-            sql += " WHERE status = ?"
-            args.append(status)
+    if term:
+        like = f"%{term.lower()}%"
+        sql = ("SELECT * FROM orders WHERE LOWER(COALESCE(code, '')) LIKE ? "
+               "OR CAST(id AS TEXT) = ? OR CAST(user_id AS TEXT) LIKE ? "
+               "OR LOWER(COALESCE(product_name, '')) LIKE ? "
+               "OR LOWER(COALESCE(external_ref, '')) LIKE ?")
+        args += [like, term, like, like, like]
+    else:
+        sql = "SELECT * FROM orders"
+        if status and status != "all":
+            if status == "open":
+                sql += " WHERE status IN ('pending','awaiting_review')"
+            else:
+                sql += " WHERE status = ?"
+                args.append(status)
     sql += " ORDER BY id DESC LIMIT ? OFFSET ?"
     return await q(sql, (*args, limit, offset))
 

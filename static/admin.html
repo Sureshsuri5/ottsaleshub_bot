@@ -401,22 +401,34 @@ function confirmDelete(title, detail, run) {
 }
 
 /* ----------------------------------------------------------------- orders */
-function ordersView(filter = 'open') {
+function ordersView(filter = 'open', term = '') {
   replaceScreen(async () => {
     loading();
-    const list = await api(`/admin/orders?status=${filter}`);
+    const list = await api(`/admin/orders?status=${filter}`
+      + (term ? `&q=${encodeURIComponent(term)}` : ''));
     const tabs = ['open', 'delivered', 'all'];
     html(`
       <h1>Orders</h1>
-      <div class="row" style="gap:8px;margin-bottom:12px">
+      <input class="search" id="oq" placeholder="Order id, buyer id, product or ref"
+             value="${esc(term)}">
+      ${term ? `<p class="sub">${list.length} result${list.length === 1 ? '' : 's'}
+        for “${esc(term)}” — <a href="#" id="oclear">clear</a></p>` : `
+      <div class="row" style="gap:8px;margin:12px 0">
         ${tabs.map((t) => `<button class="mini ${t === filter ? '' : 'ghost'}" data-f="${t}">
           ${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}
-      </div>
+      </div>`}
       ${list.length ? list.map(orderCard).join('')
         : `<div class="empty"><b>Nothing here</b>Orders appear the moment a buyer starts
            checkout.</div>`}`);
 
     view.querySelectorAll('[data-f]').forEach((b) => b.onclick = () => ordersView(b.dataset.f));
+    const q = view.querySelector('#oq');
+    // search on Enter rather than per keystroke: each search is a round trip,
+    // and an order id is pasted whole rather than typed a character at a time
+    q?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); ordersView(filter, q.value.trim()); }
+    });
+    on('#oclear', 'click', (e) => { e.preventDefault(); ordersView(filter, ''); });
     view.querySelectorAll('[data-open]').forEach((c) => c.onclick = (e) => {
       // the approve/reject buttons live inside the card; a tap on one of those
       // must not also open the order
