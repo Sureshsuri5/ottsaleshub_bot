@@ -594,6 +594,43 @@ async def adm_withdrawals(request):
     return web.json_response({"pending": out})
 
 
+async def adm_wallet_hide(request):
+    """Hide a swept address from the wallet list, or bring it back.
+
+    Hidden, not deleted: the address is derived from the seed and the row is an
+    order that belongs in the history. Hiding one that still holds a balance is
+    refused — the whole point of the list is that nothing with money in it can
+    fall out of view.
+    """
+    d = await request.json()
+    addr = str(d.get("address", "")).strip().lower()
+    if not addr.startswith("0x"):
+        return web.json_response({"error": "Bad address."}, status=400)
+
+    hidden = {a for a in (await db.setting("wallet:hidden", "")).split(",") if a}
+    if d.get("show"):
+        hidden.discard(addr)
+    else:
+        prov = payments.get("bep20")
+        bal = None
+        if prov is not None and hasattr(prov, "token_balance"):
+            try:
+                bal = await asyncio.wait_for(prov.token_balance(addr), timeout=10)
+            except Exception:
+                bal = None
+        if bal is not None and bal > 0.009:
+            return web.json_response(
+                {"error": f"That address still holds {bal:.2f}. Sweep it first."},
+                status=400)
+        if bal is None:
+            return web.json_response(
+                {"error": "Couldn't check the balance — the chain didn't answer. "
+                          "Try again in a moment."}, status=503)
+        hidden.add(addr)
+    await db.set_setting("wallet:hidden", ",".join(sorted(hidden)))
+    return web.json_response({"ok": True, "hidden": len(hidden)})
+
+
 async def adm_wallet(request):
     """Which derived accounts hold funds, for the panel.
 
@@ -638,7 +675,13 @@ async def adm_wallet(request):
         e["orders"] += 1
         e["late"] += 1 if r["status"] == "credited" else 0
 
-    out = sorted(acc.values(), key=lambda e: (e["index"] is None, e["index"] or 0))
+    hidden = {a for a in (await db.setting("wallet:hidden", "")).split(",") if a}
+    show_all = request.query.get("all") == "1"
+    out = [e for e in acc.values()
+           if show_all or e["address"].lower() not in hidden]
+    out = sorted(out, key=lambda e: (e["index"] is None, e["index"] or 0))
+    for e in out:
+        e["hidden"] = e["address"].lower() in hidden
 
     # Live on-chain balances. What the bot recorded arriving and what is still
     # sitting there are different numbers the moment you sweep, and the second
@@ -659,6 +702,8 @@ async def adm_wallet(request):
 
     known = [e["available"] for e in out if isinstance(e.get("available"), (int, float))]
     return web.json_response({
+        "hidden_count": len(hidden),
+        "showing_all": show_all,
         "unclaimed": round(sum(known), 2) if known else None,
         "unknown_balances": sum(1 for e in out if e.get("available") is None),
         "ready": True, "next_index": nxt, "path": hdwallet.PATH,
@@ -1066,6 +1111,7 @@ def build_app(bot: Bot) -> web.Application:
     r.add_post("/api/admin/withdrawals", adm_withdrawals)
     r.add_post("/api/terms", api_terms_accept)
     r.add_get("/api/admin/wallet", adm_wallet)
+    r.add_post("/api/admin/wallet/hide", adm_wallet_hide)
     r.add_get("/api/admin/users", adm_users)
     r.add_post("/api/admin/user/{uid}", adm_user_action)
     r.add_post("/api/admin/broadcast", adm_broadcast)

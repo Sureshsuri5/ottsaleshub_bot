@@ -519,12 +519,17 @@ function userView(uid) {
 }
 
 /* ------------------------------------------------------------------- more */
+let walletShowAll = false;
+
 function walletView() {
   pushScreen(async () => {
-    const w = await api('/admin/wallet');
+    const w = await api('/admin/wallet' + (walletShowAll ? '?all=1' : ''));
     const money = (n) => `${w.currency || ''}${Number(n || 0).toFixed(2)}`;
     html(`
       <h1>Deposit wallet</h1>
+      ${w.hidden_count ? `<p class="sub"><a href="#" id="togglehidden">${
+          w.showing_all ? 'Hide swept addresses' : `Show ${w.hidden_count} hidden`
+        }</a></p>` : ''}
       ${!w.ready ? `<p class="sub">Per-order addresses are off${
           w.problem ? ` — ${esc(w.problem)}` : ''}.</p>` : `
       <p class="sub">Each order gets its own address, derived from your seed.
@@ -545,7 +550,11 @@ function walletView() {
                     a.index === null || a.index === undefined ? ''
                       : `<span class="widx">index ${a.index}</span>`}</span>
               <span class="wamt">${a.available === null || a.available === undefined
-                    ? '<span class="muted">?</span>' : money(a.available)}</span>
+                    ? '<span class="muted">?</span>' : money(a.available)}
+                <button class="whide" data-addr="${esc(a.address)}"
+                        data-show="${a.hidden ? '1' : ''}"
+                        title="${a.hidden ? 'Show again' : 'Hide once swept'}"
+                        >${a.hidden ? '↩' : '✕'}</button></span>
             </div>
             <code class="waddr">${esc(a.address)}</code>
             <div class="wmeta">
