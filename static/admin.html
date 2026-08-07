@@ -539,34 +539,38 @@ function moreView() {
         next index <b>${w.next_index}</b> ·
         ${w.pending} awaiting payment</p>
       ${!(w.accounts || []).length ? '<p class="sub">No address has received funds yet.</p>' : `
-        <table class="tbl"><tbody>
+        <div class="wallet">
         ${w.accounts.map((a) => `
-          <tr><td>
-            <b>${a.index === null || a.index === undefined
-                  ? (a.shared ? 'Shared address' : 'Unknown address')
-                  : `MetaMask account ${a.index + 1}`}</b>
-            ${a.index === null || a.index === undefined ? '' :
-              `<span class="muted small"> (index ${a.index})</span>`}
-            ${a.late ? `<span class="muted small"> · ${a.late} late</span>` : ''}
-            <br><code class="small">${esc(a.address)}</code>
-            <br><a class="small" target="_blank"
-                  href="https://bscscan.com/address/${esc(a.address)}">View on BscScan</a>
-          </td><td style="text-align:right">
-            <b>${a.available === null || a.available === undefined
-                  ? '<span class="muted">?</span>'
-                  : money(a.available)}</b>
-            <br><span class="muted small">received ${money(a.amount)}</span>
-            <br><span class="muted small">${a.orders} order(s)</span></td></tr>`).join('')}
-        </tbody></table>
-        <p class="sub">
-          <b>Unclaimed: ${w.unclaimed === null || w.unclaimed === undefined
-              ? '—' : money(w.unclaimed)}</b> — still sitting on these
-          addresses right now, waiting to be swept.<br>
-          <b>Total received: ${money(w.total)}</b> — everything these addresses
-          have ever taken in, including what you've already moved out.
-          ${w.unknown_balances ? `<br><span class="muted">${w.unknown_balances}
-            address(es) couldn't be checked — the chain didn't answer. Shown
-            as <b>?</b> rather than zero.</span>` : ''}
+          <div class="wcard">
+            <div class="wtop">
+              <span class="wname">${a.index === null || a.index === undefined
+                    ? (a.shared ? 'Shared address' : 'Unknown address')
+                    : `Account ${a.index + 1}`}${
+                    a.index === null || a.index === undefined ? ''
+                      : `<span class="widx">index ${a.index}</span>`}</span>
+              <span class="wamt">${a.available === null || a.available === undefined
+                    ? '<span class="muted">?</span>' : money(a.available)}</span>
+            </div>
+            <code class="waddr">${esc(a.address)}</code>
+            <div class="wmeta">
+              <span>${money(a.amount)} received · ${a.orders} order${
+                    a.orders === 1 ? '' : 's'}${
+                    a.late ? ` · ${a.late} late` : ''}</span>
+              <a target="_blank"
+                 href="https://bscscan.com/address/${esc(a.address)}">BscScan ↗</a>
+            </div>
+          </div>`).join('')}
+        </div>
+        <div class="wtotals">
+          <div><span>Unclaimed</span><b>${w.unclaimed === null || w.unclaimed === undefined
+              ? '—' : money(w.unclaimed)}</b></div>
+          <div><span>Total received</span><b>${money(w.total)}</b></div>
+        </div>
+        <p class="sub">Unclaimed is what is sitting on these addresses now,
+          waiting to be swept. Total received counts everything they have ever
+          taken in, including what you have already moved out.
+          ${w.unknown_balances ? `<br>${w.unknown_balances} address(es)
+            couldn't be checked — shown as <b>?</b> rather than zero.` : ''}
         </p>`}`}
       <h2>Broadcast</h2>
       <p class="sub">Sent to every user who hasn't been banned. HTML formatting works.</p>

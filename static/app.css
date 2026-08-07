@@ -339,3 +339,41 @@ img.brandmark { object-fit: cover; }
   font-size: .93rem; line-height: 1.55; opacity: .9;
 }
 .btn.wide { width: 100%; margin-top: .5rem; }
+
+/* ---- deposit wallet (admin) -------------------------------------------
+   Cards rather than a table: on a phone-width panel the amount column wrapped
+   and left "received" and "order(s)" stranded on their own lines. A card can
+   put the two numbers that matter on one row and let the address, which is
+   long and unbreakable, have a line to itself. */
+.wallet { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 14px; }
+.wcard {
+  padding: 12px 14px; border-radius: 12px;
+  background: var(--card, rgba(255, 255, 255, .04));
+  border: 1px solid var(--line, rgba(255, 255, 255, .08));
+}
+.wtop { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.wname { font-weight: 600; font-size: 14.5px; }
+.widx {
+  margin-left: 6px; font-weight: 400; font-size: 11px;
+  color: var(--muted); white-space: nowrap;
+}
+.wamt { font-size: 17px; font-weight: 700; letter-spacing: -.02em; white-space: nowrap; }
+.waddr {
+  display: block; margin: 7px 0 6px; font-size: 11.5px; line-height: 1.45;
+  color: var(--muted); word-break: break-all;
+}
+.wmeta {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; font-size: 12px; color: var(--muted);
+}
+.wmeta a { white-space: nowrap; }
+.wtotals {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;
+}
+.wtotals div {
+  padding: 11px 13px; border-radius: 12px;
+  background: var(--card, rgba(255, 255, 255, .04));
+}
+.wtotals span { display: block; font-size: 11px; color: var(--muted);
+                text-transform: uppercase; letter-spacing: .05em; }
+.wtotals b { font-size: 18px; letter-spacing: -.02em; }
