@@ -86,16 +86,14 @@ async function init() {
     if (!(await ensureTerms())) return;
     shopView();
   } catch (e) {
+    // What failed, first. The old copy talked about ADMIN_PANEL_TOKEN — which
+    // is an admin concern and means nothing to a buyer who just wants to shop.
     const browser = !inTelegram();
+    const msg = e.message || 'Something went wrong.';
     html(`<div class="empty">
-      <b>${browser ? 'Open this from Telegram' : "Can't sign in"}</b>
-      ${browser
-        ? `This shop signs you in with your Telegram account, so it needs to be
-           opened from the bot.<br><br>To use it in a browser instead, set
-           <code>ADMIN_PANEL_TOKEN</code> in <code>.env</code> and add
-           <code>?token=YOUR_TOKEN</code> to this URL.`
-        : esc(e.message)}
-      ${browser && e.message ? `<br><br><span class="small muted">${esc(e.message)}</span>` : ''}
+      <b>${browser ? "Can't open the shop" : "Can't sign in"}</b>
+      ${esc(msg)}
+      ${browser ? `<br><br>Open it from the bot in Telegram instead.` : ''}
     </div>`);
   }
 }

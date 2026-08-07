@@ -76,16 +76,24 @@ async function init() {
     if (!me.admin) throw new Error('This account is not an admin.');
     homeView();
   } catch (e) {
+    // Lead with what actually went wrong. The old text explained the token
+    // route regardless of the cause, so a signed-in admin whose id simply
+    // wasn't listed was told to go and edit .env — advice for a different
+    // problem entirely.
     const browser = !inTelegram();
+    const msg = e.message || 'Something went wrong.';
+    const notAdmin = /not an admin/i.test(msg);
     html(`<div class="empty">
-      <b>${browser ? 'Open this from Telegram' : 'No access'}</b>
-      ${browser
-        ? `This admin panel signs you in with your Telegram account, so it needs to be
-           opened from the bot.<br><br>To use it in a browser instead, set
-           <code>ADMIN_PANEL_TOKEN</code> in <code>.env</code> and add
-           <code>?token=YOUR_TOKEN</code> to this URL.`
-        : esc(e.message)}
-      ${browser && e.message ? `<br><br><span class="small muted">${esc(e.message)}</span>` : ''}
+      <b>${notAdmin ? 'Not an admin account' : browser ? "Can't open the panel" : 'No access'}</b>
+      ${esc(msg)}
+      ${notAdmin
+        ? `<br><br>Add this account's Telegram id to <code>ADMIN_IDS</code>,
+           or open the panel with
+           <code>?token=YOUR_ADMIN_PANEL_TOKEN</code> in the URL.`
+        : browser
+          ? `<br><br>Open it from the bot in Telegram, or add
+             <code>?token=YOUR_ADMIN_PANEL_TOKEN</code> to this URL.`
+          : ''}
     </div>`);
   }
 }

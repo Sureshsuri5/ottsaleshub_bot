@@ -129,7 +129,11 @@ async def auth_middleware(request: web.Request, handler: Callable):
                         "first_name": row["first_name"]}
 
     if user is None and cfg.panel_token:
-        token = request.headers.get("X-Admin-Token", "")
+        # query string as well as header: an <img src> can't send headers, so
+        # the QR image had no way to authenticate in browser-token mode and
+        # came back 401 as a broken image
+        token = (request.headers.get("X-Admin-Token", "")
+                 or request.query.get("token", ""))
         if hmac.compare_digest(token, cfg.panel_token) and cfg.admin_ids:
             user = {"id": cfg.admin_ids[0], "first_name": "Browser", "username": "dev"}
 
