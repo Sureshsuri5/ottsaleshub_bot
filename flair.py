@@ -362,6 +362,34 @@ def expand_slots(text: str) -> str:
     return PLACEHOLDER.sub(sub, text)
 
 
+_TAGS = re.compile(r"<[^>]+>")
+
+
+def plain(text: str) -> str:
+    """Telegram-formatted text as readable plain text.
+
+    The Mini App is a web page: it can't render <b> tags meant for Telegram's
+    parser, and a premium emoji is a Telegram concept with no web equivalent.
+    Tokens collapse to their fallback character and tags are dropped, so a
+    description written for the bot still reads correctly in the browser
+    instead of showing its own markup.
+    """
+    out = EMOJI_TOKEN.sub(lambda m: m.group(2), text or "")
+    out = TG_EMOJI.sub(lambda m: m.group(2), out)
+    out = PLACEHOLDER.sub(lambda m: SLOTS.get(m.group(1), ""), out)
+    # tags that mean "new line" become one before the rest are dropped —
+    # otherwise a description written as a list arrives as one long sentence
+    out = re.sub(r"<br\s*/?>|</p>|</div>|</li>|</blockquote>", "\n", out,
+                 flags=re.I)
+    out = _TAGS.sub("", out)
+    out = (out.replace("&amp;", "&").replace("&lt;", "<")
+              .replace("&gt;", ">").replace("&quot;", '"'))
+    # collapse runs of blank lines, keep single breaks
+    lines = [ln.strip() for ln in out.splitlines()]
+    return "\n".join(ln for i, ln in enumerate(lines)
+                      if ln or (i and lines[i - 1])).strip()
+
+
 def tokenise(html: str) -> str:
     """Turn <tg-emoji> tags into copy-safe {{e:id:char}} tokens."""
     return TG_EMOJI.sub(lambda m: "{{e:%s:%s}}" % (m.group(1), m.group(2)), html)

@@ -400,3 +400,8 @@ img.brandmark { object-fit: cover; }
              text-transform: uppercase; letter-spacing: .05em; }
 .dash b { display: block; font-size: 19px; letter-spacing: -.02em; margin-top: 2px; }
 .dash .small { text-transform: none; letter-spacing: 0; font-size: 11.5px; }
+
+/* Product description and note: written as multi-line text in Telegram, so
+   the line breaks have to survive into the web view. */
+.card.pre { white-space: pre-wrap; line-height: 1.5; }
+.card.note { border-left: 3px solid var(--amber, #f5a524); }

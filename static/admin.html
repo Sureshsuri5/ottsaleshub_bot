@@ -85,6 +85,7 @@ async function init() {
            <code>ADMIN_PANEL_TOKEN</code> in <code>.env</code> and add
            <code>?token=YOUR_TOKEN</code> to this URL.`
         : esc(e.message)}
+      ${browser && e.message ? `<br><br><span class="small muted">${esc(e.message)}</span>` : ''}
     </div>`);
   }
 }

@@ -295,6 +295,10 @@ async def api_catalog(request):
         prods = []
         for p in await db.products(c["id"], only_active=True):
             prods.append({**dict(p),
+                          # web-safe: Telegram markup and premium emoji tokens
+                          # mean nothing in a browser and were being printed raw
+                          "description": flair.plain(p["description"]),
+                          "note": flair.plain(p["note"] if "note" in p.keys() else ""),
                           "price": (await pricing.price_for(p, request["uid"])
                                     if request["uid"] else round(p["price"], 2)),
                           "list_price": p["price"],

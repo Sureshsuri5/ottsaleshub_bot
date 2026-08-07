@@ -95,6 +95,7 @@ async function init() {
            <code>ADMIN_PANEL_TOKEN</code> in <code>.env</code> and add
            <code>?token=YOUR_TOKEN</code> to this URL.`
         : esc(e.message)}
+      ${browser && e.message ? `<br><br><span class="small muted">${esc(e.message)}</span>` : ''}
     </div>`);
   }
 }
@@ -229,7 +230,8 @@ const productCard = (p) => {
         <div class="grow">
           <div class="trunc"><b>${esc(p.emoji || '')} ${esc(p.name)}</b>
             <span class="num muted small">(${p.infinite ? '∞' : p.stock})</span></div>
-          <div class="small muted trunc">${esc(p.description) || 'Digital delivery'}</div>
+          <div class="small muted trunc">${p.available || p.infinite
+            ? 'In stock — instant delivery' : 'Sold out'}</div>
         </div>
         <div class="num" style="font-weight:700">${money(p.price)}</div>
       </div>
@@ -326,7 +328,8 @@ function productView(pid) {
       <h1>${esc(p.emoji || '')} ${esc(p.name)}</h1>
       <p class="sub">Price: <b class="num">${money(p.price)}</b>${
         p.unit ? ' / ' + esc(p.unit) : ''}</p>
-      ${p.description ? `<div class="card small">${esc(p.description)}</div>` : ''}
+      ${p.description ? `<div class="card small pre">${esc(p.description)}</div>` : ''}
+      ${p.note ? `<div class="card small pre note">${esc(p.note)}</div>` : ''}
       <div class="card">
         <div class="between"><span class="muted small">Stock</span>
           <span class="num">${p.infinite ? '∞' : p.stock}</span></div>
