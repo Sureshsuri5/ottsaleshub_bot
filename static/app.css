@@ -420,6 +420,9 @@ img.brandmark { object-fit: cover; }
    defined edge and a consistent hit area make them look like the controls
    they are. */
 .topbar .chip {
+  /* buttons are width:100% globally, which made the sign-in chip swallow the
+     whole row; in a flex bar these should size to their own content */
+  width: auto; flex: none;
   border-color: color-mix(in srgb, var(--text) 22%, transparent);
   background: color-mix(in srgb, var(--panel) 92%, var(--text) 8%);
   color: var(--text);
