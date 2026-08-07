@@ -390,12 +390,46 @@ function productView(pid) {
       await api(`/admin/product/${pid}`, { method: 'PATCH', body: { is_active: !p.is_active } });
       toast(p.is_active ? 'Hidden from shop' : 'Live in shop'); refresh();
     });
+    // Listed separately from the add box: this is the only place you can see
+    // what is actually in stock, and remove a single wrong item without
+    // clearing the lot.
+    async function paintStock() {
+      const box = view.querySelector('#stocklist');
+      if (!box) return;
+      try {
+        const r = await api(`/admin/product/${pid}/stock`);
+        const rows = r.rows || [];
+        box.innerHTML = !rows.length
+          ? `<p class="sub">Nothing unsold.${r.sold ? ` ${r.sold} sold.` : ''}</p>`
+          : rows.map((it, i) => `
+              <div class="wcard">
+                <div class="wtop">
+                  <span class="wname">${i + 1}.</span>
+                  <button class="whide" data-delstock="${it.id}" title="Remove">✕</button>
+                </div>
+                <code class="waddr">${esc(it.payload)}</code>
+              </div>`).join('')
+            + `<p class="sub">${rows.length} unsold${r.sold ? ` · ${r.sold} sold` : ''}</p>`;
+        box.querySelectorAll('[data-delstock]').forEach((b) => b.onclick = () =>
+          confirmDelete('Remove this item?',
+            'It has not been sold, so nobody loses anything.', async () => {
+              await api(`/admin/product/${pid}/stock`, {
+                method: 'POST', body: { delete_id: Number(b.dataset.delstock) } });
+              toast('Removed'); paintStock();
+            }));
+      } catch (e) { box.innerHTML = `<p class="sub">${esc(e.message)}</p>`; }
+    }
+    paintStock();
+
     on('#addStock', 'click', async (e) => {
       const lines = view.querySelector('#lines').value;
       if (!lines.trim()) return toast('Paste at least one line', 'err');
       e.target.disabled = true;
       const r = await api(`/admin/product/${pid}/stock`, { method: 'POST', body: { lines } });
-      toast(`${r.added} item${r.added === 1 ? '' : 's'} added`); refresh();
+      e.target.disabled = false;
+      view.querySelector('#lines').value = '';
+      toast(`${r.added} item${r.added === 1 ? '' : 's'} added`);
+      paintStock();
     });
     on('#export', 'click', async () => {
       const r = await api(`/admin/product/${pid}/stock`);
