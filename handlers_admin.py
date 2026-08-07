@@ -150,7 +150,7 @@ async def _flair_home():
         done = sum(1 for s in slots if flair.ICONS.get(s))
         rows.append([k.btn(f"{section} — {done}/{len(slots)} set", f"a:fsec:{section}")])
     emoji = await db.setting("flair:welcome_emoji", flair.SLOTS["welcome"])
-    delay = await db.setting("flair:welcome_delay", "0")
+    delay = await db.setting("flair:welcome_delay", "0.9")
     rows.append([k.btn(f"⏳ Intro: {emoji or 'off'} · {delay}s", "a:intro")])
     rows.append([k.btn("🧪 Test buttons", "a:btntest")])
     rows.append([k.btn("« Panel", "a:home")])
@@ -222,7 +222,7 @@ async def intro_edit(c: CallbackQuery, state: FSMContext):
         "Sent right after /start, just before the welcome message.\n\n"
         "Send an emoji (it renders large on its own), optionally followed by "
         "how long it should stay on screen — e.g. <code>⏳ 1.5</code>\n"
-        "It is cleared in the background, so it never delays the welcome.\n"
+        "It shows for that long, is deleted, then the welcome appears.\n"
         "Send <code>-</code> to turn it off.\n\n"
         "<i>For a premium emoji, set the <b>Intro beat</b> slot under "
         "Other — it's used here automatically. A sticker on that slot wins "
@@ -236,7 +236,7 @@ async def intro_save(m: Message, state: FSMContext):
     await state.clear()
     parts = (m.text or "").strip().split()
     emoji = parts[0] if parts else "-"
-    delay = "0"
+    delay = "0.9"
     if len(parts) > 1:
         try:
             delay = str(max(0.0, min(5.0, float(parts[1]))))

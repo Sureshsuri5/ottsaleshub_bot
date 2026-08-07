@@ -456,10 +456,14 @@ async def send_sticker(bot: Bot, chat_id: int | str, slot: str, markup=None):
 
 
 async def intro_delay() -> float:
-    """How long the placeholder lingers before it is deleted. Never blocks the
-    welcome — the caller clears the beat in the background."""
+    """How long the emoji stays on screen before it is deleted.
+
+    This is the whole cost of the beat: the buyer sees the emoji for this long
+    and then the welcome. Long enough to register, short enough not to feel
+    like waiting. Set it in the panel, or to 0 for an instant flash.
+    """
     try:
-        return max(0.0, min(float(await db.setting("flair:welcome_delay", "0")), 5))
+        return max(0.0, min(float(await db.setting("flair:welcome_delay", "0.9")), 5))
     except ValueError:
         return 0.0
 
@@ -506,6 +510,20 @@ async def intro(bot: Bot, chat_id: int) -> int | None:
                 log.warning("intro emoji failed: %s", e)
                 return None
     return msg_id if isinstance(msg_id, int) else None
+
+
+# Tasks nobody awaits still need a strong reference: CPython may collect a
+# task that only the event loop holds, and it then never runs. The intro
+# placeholder was being scheduled for deletion and sometimes simply never
+# deleted, which is why the emoji stayed on screen next to the welcome.
+_BACKGROUND: set = set()
+
+
+def fire_and_forget(coro) -> None:
+    """Run a coroutine in the background without losing it to the collector."""
+    task = asyncio.ensure_future(coro)
+    _BACKGROUND.add(task)
+    task.add_done_callback(_BACKGROUND.discard)
 
 
 async def clear_intro(bot: Bot, chat_id: int, msg_id: int | None,

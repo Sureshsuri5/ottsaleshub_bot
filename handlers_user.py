@@ -188,15 +188,18 @@ async def start(m: Message, state: FSMContext):
                              f"through your link.\nYou earn when they make their first purchase.")
             except Exception:
                 pass
-    # Render the welcome *while* the placeholder is being sent, then let the
-    # placeholder clean itself up in the background. Nothing between /start and
-    # the welcome is serial any more except the two sends themselves.
+    # Emoji, then it disappears, then the welcome — in that order, so the two
+    # are never on screen together.
+    #
+    # The welcome is rendered *while* the emoji is on screen rather than after
+    # it, so the only thing the buyer waits for is the beat itself plus one
+    # delete. Building it afterwards is what made /start feel slow before.
     text = asyncio.create_task(menu_text(m.from_user.id))
     intro_id = await flair.intro(m.bot, m.chat.id)
-    delay = await flair.intro_delay() if intro_id else 0.0
-    await send_menu(m, await text)
     if intro_id:
-        asyncio.create_task(flair.clear_intro(m.bot, m.chat.id, intro_id, delay))
+        await flair.clear_intro(m.bot, m.chat.id, intro_id,
+                                await flair.intro_delay())
+    await send_menu(m, await text)
 
 
 async def send_menu(m: Message, text: str | None = None) -> None:

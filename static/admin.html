@@ -420,10 +420,17 @@ function productView(pid) {
 }
 
 function confirmDelete(title, detail, run) {
-  if (tg?.showConfirm) {
-    return tg.showConfirm(`${title}\n\n${detail}`, (ok) => ok && run());
+  // Telegram's dialog only works inside a Telegram client. In a browser the
+  // method exists but throws from inside its own cross-origin script, which
+  // the browser reports as a bare "Script error." with no file or line — so
+  // check where we are rather than whether the method is defined.
+  const go = () => Promise.resolve()
+    .then(run)
+    .catch((e) => toast(e.message || 'That failed', 'err'));
+  if (inTelegram() && tg?.showConfirm) {
+    return tg.showConfirm(`${title}\n\n${detail}`, (ok) => ok && go());
   }
-  if (confirm(`${title}\n\n${detail}`)) run();
+  if (confirm(`${title}\n\n${detail}`)) go();
 }
 
 /* ----------------------------------------------------------------- orders */
