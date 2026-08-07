@@ -885,23 +885,42 @@ function moreView() {
       <h2>Bot messages</h2>
       <p class="sub">Every message the bot sends. Leave a box empty to keep the
         default.</p>
+      <input class="search" id="msgq" placeholder="Filter by name, e.g. delivery or refer">
       ${[...new Set(msgs.messages.map((m) => m.section))].map((sec) => `
-        <h3 style="margin:18px 0 8px;font-size:14px">${esc(sec)}</h3>
-        ${msgs.messages.filter((m) => m.section === sec).map((m) => `
-          <div class="card">
-            <div class="between">
-              <b>${esc(m.label)}</b>
-              ${m.edited ? '<span class="pill ok">Edited</span>' : ''}
-            </div>
-            ${m.fields.length ? `<div class="tiny muted" style="margin-top:4px">
-              ${m.fields.map((f) => '{' + esc(f) + '}').join(' ')}</div>` : ''}
-            <textarea class="msg" data-k="${esc(m.key)}" data-default="${esc(m.default)}"
-              style="min-height:64px">${esc(m.value)}</textarea>
-            ${m.edited ? `<button class="ghost mini reset" data-k="${esc(m.key)}"
-              style="margin-top:6px">↩ Restore default</button>` : ''}
-          </div>`).join('')}`).join('')}
+        <details class="fxsec">
+          <summary>${esc(sec)}
+            <span class="fxcount">${msgs.messages.filter((m) => m.section === sec
+              && m.edited).length}/${
+              msgs.messages.filter((m) => m.section === sec).length} edited</span></summary>
+          ${msgs.messages.filter((m) => m.section === sec).map((m) => `
+            <details class="msgrow" data-find="${esc((m.key + ' ' + m.label).toLowerCase())}">
+              <summary>${m.edited ? '✏️' : '·'} ${esc(m.label)}
+                <code>${esc(m.key)}</code></summary>
+              ${m.fields.length ? `<div class="tiny muted" style="margin:2px 0 5px">
+                ${m.fields.map((f) => '{' + esc(f) + '}').join(' ')}</div>` : ''}
+              <textarea class="msg" data-k="${esc(m.key)}" data-default="${esc(m.default)}"
+                style="min-height:76px">${esc(m.value)}</textarea>
+              ${m.edited ? `<button class="ghost mini reset" data-k="${esc(m.key)}"
+                style="margin-top:6px">↩ Restore default</button>` : ''}
+            </details>`).join('')}
+        </details>`).join('')}
       <button class="ghost" id="saveMsgs">Save messages</button>`);
 
+    // same filter behaviour as the flair editor: matches open their section
+    // and their own row, so a hit is never hidden two levels deep
+    on('#msgq', 'input', (e) => {
+      const q = e.target.value.trim().toLowerCase();
+      view.querySelectorAll('#msgq ~ .fxsec').forEach((sec) => {
+        let hits = 0;
+        sec.querySelectorAll('.msgrow').forEach((r) => {
+          const show = !q || r.dataset.find.includes(q);
+          r.style.display = show ? '' : 'none';
+          if (show) { hits++; if (q) r.open = true; }
+        });
+        sec.style.display = hits ? '' : 'none';
+        if (q) sec.open = true;
+      });
+    });
     on('#walletbtn', 'click', () => { haptic(); walletView(); });
     on('#send', 'click', (e) => {
       const text = view.querySelector('#bc').value.trim();

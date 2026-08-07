@@ -491,3 +491,15 @@ img.brandmark { object-fit: cover; }
 @media (max-width: 560px) {
   .fxrow { grid-template-columns: 1fr; padding-left: 14px; gap: 5px; }
 }
+
+/* One collapsed row per message. 58 textareas open at once was a page you
+   scrolled past rather than read; the label and its edited mark are enough to
+   find the one you want. */
+.msgrow { border-top: 1px solid var(--line); padding: 0 14px 8px 14px; }
+.msgrow > summary {
+  padding: 9px 0; cursor: pointer; font-size: 13px; list-style: none;
+  display: flex; align-items: center; gap: 7px;
+}
+.msgrow > summary::-webkit-details-marker { display: none; }
+.msgrow > summary code { font-size: 10.5px; color: var(--muted); }
+.msgrow textarea { margin: 0; font-size: 13px; }
