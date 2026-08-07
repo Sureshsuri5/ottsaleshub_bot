@@ -482,6 +482,48 @@ async def emoji_test(m: Message, state: FSMContext):
     await m.answer("\n".join(lines), reply_markup=k.back())
 
 
+@router.message(Command("reset"))
+async def reset_cmd(m: Message, state: FSMContext):
+    """Clear trading history so the shop starts from order #1.
+
+    Two steps on purpose. This deletes every order permanently, and a command
+    that destroys the sales record on a single tap is one that will eventually
+    be tapped by accident.
+    """
+    await state.clear()
+    arg = (m.text or "").partition(" ")[2].strip().upper()
+    stats = await db.stats()
+    counts = await db.order_counts()
+
+    if arg not in ("RESET", "RESET BALANCES"):
+        return await m.answer(
+            "♻️ <b>Reset sales history</b>\n\n"
+            f"This deletes <b>{counts['all']} order(s)</b> and all withdrawal "
+            f"records, and starts numbering again at <b>#1</b>.\n"
+            f"Revenue resets from {cfg.money(stats['rev_all'])} to zero.\n\n"
+            "<b>Kept:</b> products, categories, stock, prices, cost prices, "
+            "settings, messages, icons, users.\n"
+            "<b>Sold stock stays sold</b> — those items went to somebody, and "
+            "reselling the same key is worse than losing the count. Use "
+            "<i>Clear sold rows</i> on a product to remove them.\n\n"
+            "Run <code>/backup</code> first — this cannot be undone.\n\n"
+            "To confirm, send:\n<code>/reset RESET</code>\n\n"
+            "To also zero every wallet balance and referral earning:\n"
+            "<code>/reset RESET BALANCES</code>")
+
+    wipe_balances = arg == "RESET BALANCES"
+    done = await db.reset_sales(clear_balances=wipe_balances)
+    lines = [f"✅ Deleted {done['orders']} order(s) and "
+             f"{done['withdrawals']} withdrawal(s).",
+             "Numbering starts again at #1."]
+    if wipe_balances:
+        lines.append(f"Wallet balances cleared ({cfg.money(done.get('balances', 0))} "
+                     f"in total).")
+    log.warning("sales history reset by admin %s (balances=%s)",
+                m.from_user.id, wipe_balances)
+    await m.answer("\n".join(lines), reply_markup=k.back())
+
+
 @router.message(Command("wallet"))
 async def wallet_cmd(m: Message, state: FSMContext):
     """Which derived accounts actually hold money, and where to find them.

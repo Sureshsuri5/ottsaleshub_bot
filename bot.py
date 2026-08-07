@@ -166,6 +166,7 @@ ADMIN_COMMANDS = USER_COMMANDS + [
     ("emojitest", "Check premium emoji against Telegram"),
     ("announcetest", "Check group announcement setup"),
     ("user", "Look up a buyer by username or id"),
+    ("reset", "Clear sales history and renumber orders"),
 ]
 
 

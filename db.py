@@ -1241,6 +1241,49 @@ async def alert_counts() -> dict:
     return {"withdrawals": r["c"], "withdraw_total": r["s"], "reviews": r["v"]}
 
 
+async def reset_sales(clear_balances: bool = False) -> dict:
+    """Wipe trading history and start order numbering again from #1.
+
+    Deliberately narrow. Products, categories, stock, prices, settings, texts,
+    flair and users all survive — this is for clearing test trades, not for
+    emptying the shop.
+
+    Sold stock stays sold: those items were handed to somebody, and making them
+    sellable again would send the same key to a second buyer. Use "Clear sold
+    rows" on a product if you want them gone too.
+    """
+    counts = {
+        "orders": (await q1("SELECT COUNT(*) c FROM orders"))["c"],
+        "withdrawals": (await q1("SELECT COUNT(*) c FROM withdrawals"))["c"],
+    }
+    await ex("DELETE FROM orders")
+    await ex("DELETE FROM withdrawals")
+    await ex("DELETE FROM seen_tx")
+    await ex("DELETE FROM waitlist")
+
+    if clear_balances:
+        counts["balances"] = (await q1(
+            "SELECT COALESCE(SUM(balance), 0) c FROM users"))["c"]
+        await ex("UPDATE users SET balance = 0, ref_earned = 0, "
+                 "ref_available = 0, ref_transferred = 0")
+
+    # start numbering from 1 again — the sequence is engine-specific
+    for table in ("orders", "withdrawals"):
+        try:
+            if _PG:
+                await ex(f"ALTER SEQUENCE {table}_id_seq RESTART WITH 1")
+            else:
+                await ex("DELETE FROM sqlite_sequence WHERE name = ?", (table,))
+        except Exception as e:
+            log.warning("could not reset the %s id sequence: %s", table, e)
+
+    # announcement bookkeeping refers to orders that no longer exist
+    for key in ("restock:pinned:newproduct_group", "restock:pinned:restock_group",
+                "restock:pinned:pricedrop_group"):
+        await ex("DELETE FROM settings WHERE key = ?", (key,))
+    return counts
+
+
 async def dashboard(days_list=(1, 7, 30), top: int = 5) -> dict:
     """Revenue over several windows, best sellers and best buyers.
 
