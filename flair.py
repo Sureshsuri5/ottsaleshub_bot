@@ -257,6 +257,35 @@ SLOTS_META = _build_slots()
 SLOTS = {k: v[0] for k, v in SLOTS_META.items()}
 
 
+# Telegram rejects a whole message with ENTITY_TEXT_INVALID when a tg-emoji
+# tag wraps text that isn't an emoji. Several rail marks look like emoji but
+# are not — ₮ is a currency sign, ◈ a geometric shape, Ł a letter — so the
+# fallback has to be checked rather than assumed.
+_EMOJI_RANGES = (
+    (0x1F000, 0x1FAFF),      # pictographs, symbols, faces, flags
+    (0x2600, 0x27BF),        # misc symbols and dingbats
+    (0x2B00, 0x2BFF),        # stars and arrows (⭐ lives here)
+    (0x1F1E6, 0x1F1FF),      # regional indicators
+    (0x2190, 0x21FF),        # arrows with emoji presentation
+    (0x2300, 0x23FF),        # ⌛ ⏳ ⏰
+    (0x2900, 0x297F),
+)
+
+
+def is_emoji(ch: str) -> bool:
+    """Whether Telegram will accept this as the text of a custom emoji."""
+    if not ch:
+        return False
+    cp = ord(ch[0])
+    return any(lo <= cp <= hi for lo, hi in _EMOJI_RANGES)
+
+
+def safe_fallback(ch: str, default: str = "💳") -> str:
+    """The character to show inside a tg-emoji tag, guaranteed acceptable."""
+    ch = (ch or "").strip()
+    return ch if is_emoji(ch) else default
+
+
 def rail_title(code: str, title: str) -> str:
     """A rail's name with its premium emoji in place of the leading mark.
 
@@ -269,7 +298,7 @@ def rail_title(code: str, title: str) -> str:
     if not eid:
         return title
     mark = _LEADING_MARK.match(title)
-    plain = mark.group(0).strip() if mark else "💳"
+    plain = safe_fallback(mark.group(0).strip() if mark else "")
     rest = _LEADING_MARK.sub("", title).strip() or title
     return f'<tg-emoji emoji-id="{eid}">{plain}</tg-emoji> {rest}'
 
@@ -558,7 +587,7 @@ def product_icon(product) -> str:
         icon = ""
     plain = (product["emoji"] or "").strip()
     if icon:
-        return f'<tg-emoji emoji-id="{icon}">{plain or "🛍"}</tg-emoji>'
+        return f'<tg-emoji emoji-id="{icon}">{safe_fallback(plain, "🛍")}</tg-emoji>'
     return plain
 
 
@@ -570,7 +599,8 @@ def product_tag(product) -> str:
     icon = icon_id(product["icon_emoji_id"])
     plain = (product["emoji"] or "").strip()
     if icon:
-        return f'<tg-emoji emoji-id="{icon}">{plain or "🛍"}</tg-emoji> <b>{name}</b>'
+        return (f'<tg-emoji emoji-id="{icon}">{safe_fallback(plain, "🛍")}'
+                f'</tg-emoji> <b>{name}</b>')
     return f"{plain} <b>{name}</b>".strip()
 
 
