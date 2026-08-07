@@ -1384,9 +1384,12 @@ async def stock_file(m: Message, state: FSMContext, bot: Bot):
     await state.clear()
     f = await bot.get_file(m.document.file_id)
     buf = await bot.download_file(f.file_path)
-    n = await db.add_stock(d["pid"], buf.read().decode("utf-8", errors="ignore").splitlines())
+    n, dupes = await db.add_stock(
+        d["pid"], buf.read().decode("utf-8", errors="ignore").splitlines())
     p = await db.product(d["pid"])
-    await m.answer(f"✅ Added {n} item(s).\n\n" + await _prod_text(p),
+    dupe_note = (f"\n<i>{dupes} duplicate(s) skipped — this product already "
+                 f"had them.</i>" if dupes else "")
+    await m.answer(f"✅ Added {n} item(s).{dupe_note}\n\n" + await _prod_text(p),
                    reply_markup=k.admin_prod_kb(p))
 
 
@@ -1399,9 +1402,11 @@ async def stock_text(m: Message, state: FSMContext):
         p = await db.product(d["pid"])
         return await m.answer("♾ Unlimited mode on.\n\n" + await _prod_text(p),
                               reply_markup=k.admin_prod_kb(p))
-    n = await db.add_stock(d["pid"], (m.text or "").splitlines())
+    n, dupes = await db.add_stock(d["pid"], (m.text or "").splitlines())
     p = await db.product(d["pid"])
-    await m.answer(f"✅ Added {n} item(s).\n\n" + await _prod_text(p),
+    dupe_note = (f"\n<i>{dupes} duplicate(s) skipped — this product already "
+                 f"had them.</i>" if dupes else "")
+    await m.answer(f"✅ Added {n} item(s).{dupe_note}\n\n" + await _prod_text(p),
                    reply_markup=k.admin_prod_kb(p))
 
 

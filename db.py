@@ -769,11 +769,39 @@ async def available(pid: int) -> int:
     return 10**6 if p["infinite"] else await stock_count(pid)
 
 
-async def add_stock(pid: int, lines: Iterable[str]) -> int:
-    rows = [(pid, ln.strip()) for ln in lines if ln.strip()]
+async def add_stock(pid: int, lines: Iterable[str]) -> tuple[int, int]:
+    """Add stock, skipping anything this product already has.
+
+    Returns (added, skipped). Duplicates are checked against sold rows too: a
+    key that has already been delivered must never be handed to a second buyer,
+    and pasting the same file twice is the ordinary way that happens.
+
+    Within the batch as well as against the database — a list can repeat itself.
+    """
+    seen: set[str] = set()
+    wanted: list[str] = []
+    skipped = 0
+    for ln in lines:
+        ln = ln.strip()
+        if not ln:
+            continue
+        if ln in seen:
+            skipped += 1
+            continue
+        seen.add(ln)
+        wanted.append(ln)
+    if not wanted:
+        return 0, skipped
+
+    existing = {r["payload"] for r in await q(
+        "SELECT payload FROM stock WHERE product_id = ?", (pid,))}
+    rows = [(pid, ln) for ln in wanted if ln not in existing]
+    skipped += len(wanted) - len(rows)
     if not rows:
-        return 0
-    return await ex_many("INSERT INTO stock (product_id, payload) VALUES (?, ?)", rows)
+        return 0, skipped
+    added = await ex_many(
+        "INSERT INTO stock (product_id, payload) VALUES (?, ?)", rows)
+    return added, skipped
 
 
 async def stock_rows(pid: int, limit: int = 200) -> list:

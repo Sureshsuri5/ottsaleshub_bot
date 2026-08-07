@@ -364,7 +364,12 @@ function productView(pid) {
       ` : `
         <label>Add items — one per line, each goes to one buyer</label>
         <textarea id="lines" placeholder="KEY-AAAA-1111&#10;KEY-BBBB-2222"></textarea>
-        <button id="addStock" style="margin-top:8px">Add to stock</button>
+        <div class="row" style="gap:8px;margin-top:8px">
+          <button id="addStock" style="flex:1">Add to stock</button>
+          <button class="ghost" id="importBtn" style="flex:0 0 auto">📄 Import .txt</button>
+        </div>
+        <input type="file" id="importFile" accept=".txt,.csv,text/plain"
+               style="display:none">
 
         <label style="margin-top:14px">Unsold items</label>
         <div id="stocklist" class="wallet"><p class="sub">Loading…</p></div>
@@ -421,6 +426,21 @@ function productView(pid) {
     }
     paintStock();
 
+    // Reads the file in the browser and drops it into the box, so you can see
+    // what you're about to add before committing it — importing straight to
+    // the database gives you no chance to notice a header row or a stray line.
+    on('#importBtn', 'click', () => view.querySelector('#importFile').click());
+    on('#importFile', 'change', async (ev) => {
+      const file = ev.target.files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      const box = view.querySelector('#lines');
+      const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      box.value = (box.value.trim() ? box.value.trim() + '\n' : '') + lines.join('\n');
+      ev.target.value = '';
+      toast(`${lines.length} line${lines.length === 1 ? '' : 's'} loaded — check, then add`);
+    });
+
     on('#addStock', 'click', async (e) => {
       const lines = view.querySelector('#lines').value;
       if (!lines.trim()) return toast('Paste at least one line', 'err');
@@ -428,7 +448,10 @@ function productView(pid) {
       const r = await api(`/admin/product/${pid}/stock`, { method: 'POST', body: { lines } });
       e.target.disabled = false;
       view.querySelector('#lines').value = '';
-      toast(`${r.added} item${r.added === 1 ? '' : 's'} added`);
+      toast(r.skipped
+        ? `${r.added} added · ${r.skipped} duplicate${r.skipped === 1 ? '' : 's'} skipped`
+        : `${r.added} item${r.added === 1 ? '' : 's'} added`,
+        r.added ? 'ok' : 'err');
       paintStock();
     });
     on('#export', 'click', async () => {

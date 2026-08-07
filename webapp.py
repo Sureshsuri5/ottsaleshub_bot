@@ -552,8 +552,9 @@ async def adm_stock(request):
         return web.json_response({"ok": True, "stock": await db.stock_count(pid)})
     if d.get("purge"):
         return web.json_response({"removed": await db.purge_sold(pid)})
-    n = await db.add_stock(pid, str(d.get("lines", "")).splitlines())
-    return web.json_response({"added": n, "stock": await db.stock_count(pid)})
+    added, skipped = await db.add_stock(pid, str(d.get("lines", "")).splitlines())
+    return web.json_response({"added": added, "skipped": skipped,
+                              "stock": await db.stock_count(pid)})
 
 
 async def adm_orders(request):
