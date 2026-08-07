@@ -7,6 +7,7 @@ twice for the same order delivers once.
 from __future__ import annotations
 
 import logging
+import re
 
 from aiogram import Bot
 from aiogram.types import BufferedInputFile, LinkPreviewOptions
@@ -165,8 +166,20 @@ async def deliver(bot: Bot, oid: int) -> bool:
     # and it sits directly under the delivered items, where the one thing they
     # want to do is copy them. The order stays reachable from My Orders, which
     # keeps its own Back button.
-    if len(payloads) > 20 or len(body) > 3000:
-        file = BufferedInputFile(body.encode(), filename=f"order_{oid}.txt")
+    if len(payloads) >= cfg.file_delivery_from or len(body) > 3000:
+        # A file rather than a wall of lines. It carries its own heading, so
+        # the buyer can still tell which order and product it belongs to after
+        # it has been saved somewhere and the chat is long gone.
+        code = o["code"] or oid
+        doc = (f"Order #{code}\n"
+               f"{p['name']} × {o['qty']}\n"
+               f"{timefmt.local_dt(o['paid_at'] or o['created_at'])}\n"
+               f"{'-' * 40}\n"
+               + "\n".join(f"{i}. {line}" for i, line in enumerate(payloads, 1))
+               + "\n")
+        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", p["name"]).strip("_") or "order"
+        file = BufferedInputFile(
+            doc.encode(), filename=f"{safe_name}_{code}.txt")
         await _safe_doc(bot, o["user_id"], file, header)
     else:
         await _safe(bot, o["user_id"], header + "\n" + listing)

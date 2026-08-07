@@ -32,6 +32,7 @@ import flair
 import pricing
 import texts
 import payments
+import timefmt
 from config import cfg
 
 log = logging.getLogger(__name__)
@@ -155,8 +156,22 @@ async def auth_middleware(request: web.Request, handler: Callable):
     return await handler(request)
 
 
+# Timestamps are stored UTC. The bot renders them in the shop's timezone via
+# timefmt; the web app was printing the raw column, so the same order showed
+# two different times depending on where you looked at it.
+_TIME_COLS = ("created_at", "paid_at", "expires_at", "processed_at")
+
+
 def rows(seq) -> list[dict]:
-    return [dict(r) for r in seq]
+    return [with_local_times(dict(r)) for r in seq]
+
+
+def with_local_times(d: dict) -> dict:
+    """Add a `_local` twin for each timestamp, in the shop's timezone."""
+    for col in _TIME_COLS:
+        if col in d and d[col]:
+            d[f"{col}_local"] = timefmt.local_dt(d[col])
+    return d
 
 
 async def body(request: web.Request) -> dict:
@@ -321,7 +336,7 @@ async def api_order(request):
     o = await db.order(int(request.match_info["oid"]))
     if not o or (o["user_id"] != request["uid"] and not request["admin"]):
         return web.json_response({"error": "not found"}, status=404)
-    return web.json_response(dict(o))
+    return web.json_response(with_local_times(dict(o)))
 
 
 async def api_order_qr(request):
@@ -623,7 +638,7 @@ async def adm_order(request):
     if not o:
         return web.json_response({"error": "No such order."}, status=404)
     u = await db.get_user(o["user_id"])
-    d = dict(o)
+    d = with_local_times(dict(o))
     d["items"] = [ln for ln in (o["delivered_text"] or "").split("\n") if ln.strip()]
     d["username"] = u["username"] if u else None
     d["first_name"] = u["first_name"] if u else None

@@ -621,7 +621,8 @@ async function ordersView() {
           </div>
           <div class="between" style="margin-top:8px">
             ${statusPill(o.status)}
-            <span class="tiny muted num">#${o.id} · ${esc(o.created_at.slice(0, 16))}</span>
+            <span class="tiny muted num">#${o.id} · ${esc(o.created_at_local
+              || o.created_at.slice(0, 16))}</span>
           </div>
         </div>`).join('')}`);
     view.querySelectorAll('[data-o]').forEach((el) => {
@@ -642,7 +643,7 @@ async function orderView(oid) {
         <div class="between" style="margin-top:10px"><span class="muted small">Paid</span>
           <span class="num">${money(o.amount)} · ${esc(o.provider)}</span></div>
         <div class="between" style="margin-top:10px"><span class="muted small">Placed</span>
-          <span class="num small">${esc(o.created_at)}</span></div>
+          <span class="num small">${esc(o.created_at_local || o.created_at)}</span></div>
       </div>
       ${o.delivered_text ? `
         <h2>Your items</h2>

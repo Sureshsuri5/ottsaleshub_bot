@@ -499,8 +499,8 @@ function orderView(id) {
         ${row('Method', esc(o.provider))}
         ${row('Paid from wallet', o.balance_used > 0 ? m(o.balance_used) : '')}
         ${row('Received', o.received > 0 ? m(o.received) : '')}
-        ${row('Created', esc(o.created_at || ''))}
-        ${row('Paid', esc(o.paid_at || ''))}
+        ${row('Created', esc(o.created_at_local || o.created_at || ''))}
+        ${row('Paid', esc(o.paid_at_local || o.paid_at || ''))}
       </div>
 
       ${o.external_ref ? `
