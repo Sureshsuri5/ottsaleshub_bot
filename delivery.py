@@ -381,10 +381,9 @@ async def announce_restocks(bot: Bot) -> None:
                     style="primary", icon_slot="buy")]))
             log.info("%s announced for product %s", kind, pid)
 
-            if kind in ("newproduct_group", "pricedrop_group"):
-                # separate slots, so a price drop replaces the last price drop
-                # rather than knocking the newest product off the pin bar
-                await _pin_announcement(bot, chat, sent.message_id, kind)
+            # separate slots per kind, so a price drop replaces the last price
+            # drop rather than knocking the newest product off the pin bar
+            await _pin_announcement(bot, chat, sent.message_id, kind)
         except Exception as e:
             log.warning("announcement failed for %s: %s", pid, e)
 

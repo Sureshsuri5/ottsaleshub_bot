@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import asyncio
 import logging
 import time
 import urllib.parse
@@ -638,7 +639,28 @@ async def adm_wallet(request):
         e["late"] += 1 if r["status"] == "credited" else 0
 
     out = sorted(acc.values(), key=lambda e: (e["index"] is None, e["index"] or 0))
+
+    # Live on-chain balances. What the bot recorded arriving and what is still
+    # sitting there are different numbers the moment you sweep, and the second
+    # one is what decides whether a sweep is worth the gas. Queried in parallel
+    # with a hard timeout: a slow node must not hang the whole panel.
+    prov = payments.get("bep20")
+    if prov is not None and hasattr(prov, "token_balance"):
+        async def _bal(entry):
+            try:
+                entry["available"] = await prov.token_balance(entry["address"])
+            except Exception:
+                entry["available"] = None
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*(_bal(e) for e in out[:40])), timeout=20)
+        except Exception:
+            log.warning("on-chain balances timed out")
+
+    known = [e["available"] for e in out if isinstance(e.get("available"), (int, float))]
     return web.json_response({
+        "unclaimed": round(sum(known), 2) if known else None,
+        "unknown_balances": sum(1 for e in out if e.get("available") is None),
         "ready": True, "next_index": nxt, "path": hdwallet.PATH,
         "pending": pending,
         "total": round(sum(e["amount"] for e in out), 2),

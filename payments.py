@@ -592,6 +592,32 @@ class EvmTokenProvider:
             return await self._inbound_rpc()      # explorer said no, ask a node
         return out
 
+    BALANCE_OF = "0x70a08231"          # balanceOf(address)
+
+    async def token_balance(self, address: str) -> float | None:
+        """What this address holds right now, summed across accepted tokens.
+
+        None means the chain couldn't be reached — reported as unknown rather
+        than zero, because showing an address as empty when the node was simply
+        down is how funds end up forgotten.
+        """
+        addr = (address or "").strip().lower().removeprefix("0x")
+        if len(addr) != 40:
+            return None
+        data = self.BALANCE_OF + addr.rjust(64, "0")
+        total, seen = 0.0, False
+        for contract in self.contracts:
+            raw = await self._rpc("eth_call",
+                                  [{"to": contract, "data": data}, "latest"])
+            if raw in (None, "0x"):
+                continue
+            try:
+                total += int(raw, 16) / (10 ** self.decimals)
+                seen = True
+            except (TypeError, ValueError):
+                continue
+        return total if seen else None
+
     async def verify_ref(self, ref: str) -> float | None:
         """Confirm one transaction hash a buyer gave us.
 

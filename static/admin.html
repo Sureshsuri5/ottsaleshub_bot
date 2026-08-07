@@ -551,12 +551,23 @@ function moreView() {
             <br><code class="small">${esc(a.address)}</code>
             <br><a class="small" target="_blank"
                   href="https://bscscan.com/address/${esc(a.address)}">View on BscScan</a>
-          </td><td style="text-align:right"><b>${money(a.amount)}</b>
+          </td><td style="text-align:right">
+            <b>${a.available === null || a.available === undefined
+                  ? '<span class="muted">?</span>'
+                  : money(a.available)}</b>
+            <br><span class="muted small">received ${money(a.amount)}</span>
             <br><span class="muted small">${a.orders} order(s)</span></td></tr>`).join('')}
         </tbody></table>
-        <p class="sub"><b>Total received: ${money(w.total)}</b> — figures are
-          what the bot recorded arriving, not live on-chain balances. Sweep and
-          this list stays the same.</p>`}`}
+        <p class="sub">
+          <b>Unclaimed: ${w.unclaimed === null || w.unclaimed === undefined
+              ? '—' : money(w.unclaimed)}</b> — still sitting on these
+          addresses right now, waiting to be swept.<br>
+          <b>Total received: ${money(w.total)}</b> — everything these addresses
+          have ever taken in, including what you've already moved out.
+          ${w.unknown_balances ? `<br><span class="muted">${w.unknown_balances}
+            address(es) couldn't be checked — the chain didn't answer. Shown
+            as <b>?</b> rather than zero.</span>` : ''}
+        </p>`}`}
       <h2>Broadcast</h2>
       <p class="sub">Sent to every user who hasn't been banned. HTML formatting works.</p>
       <textarea id="bc" placeholder="Fresh stock just landed — 20% off today."></textarea>
