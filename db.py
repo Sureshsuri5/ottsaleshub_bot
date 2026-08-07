@@ -1244,6 +1244,21 @@ async def alert_counts() -> dict:
     return {"withdrawals": r["c"], "withdraw_total": r["s"], "reviews": r["v"]}
 
 
+async def api_usage(tg_id: int) -> dict:
+    """What this key has done — orders placed and spend, for the API screen."""
+    r = await q1(
+        "SELECT COUNT(*) c, COALESCE(SUM(COALESCE(amount, 0)), 0) s "
+        "FROM orders WHERE user_id = ? AND kind = 'purchase' "
+        "AND provider = 'balance' AND status = 'delivered'", (tg_id,))
+    recent = await q1(
+        "SELECT COALESCE(SUM(COALESCE(amount, 0)), 0) s FROM orders "
+        "WHERE user_id = ? AND kind = 'purchase' AND provider = 'balance' "
+        "AND status = 'delivered' AND created_at > datetime('now', '-30 days')",
+        (tg_id,))
+    return {"orders": int(r["c"] or 0), "spent": float(r["s"] or 0),
+            "recent": float(recent["s"] or 0) if recent else 0.0}
+
+
 async def order_by_client_ref(user_id: int, ref: str):
     """An order this buyer already created under the same reference."""
     return await q1("SELECT * FROM orders WHERE user_id = ? AND client_ref = ? "

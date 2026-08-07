@@ -121,10 +121,20 @@ def withdraw_kb(methods, can: bool) -> InlineKeyboardMarkup:
 
 
 def api_kb(has_key: bool) -> InlineKeyboardMarkup:
-    return kb(
-        [btn("♻️ Rotate key" if has_key else "🔑 Generate key", "pf:apikey")],
-        [back_btn("Back", "menu:profile")],
-    )
+    rows = []
+    if has_key:
+        rows.append([btn("🗑 Delete API key", "pf:apidel", style="danger")])
+        rows.append([btn("♻️ Rotate key", "pf:apikey")])
+    else:
+        rows.append([btn("🔑 Generate API key", "pf:apikey", style="success")])
+    rows.append([btn("📗 API documentation", "pf:apidocs")])
+    rows.append([btn("🔄 Refresh", "pf:api")])
+    rows.append([back_btn("Back", "menu:profile")])
+    return kb(*rows)
+
+
+def api_docs_kb() -> InlineKeyboardMarkup:
+    return kb([back_btn("Back", "pf:api")])
 
 
 def refer_kb(link: str, can_transfer: bool) -> InlineKeyboardMarkup:

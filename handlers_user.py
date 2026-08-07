@@ -1041,31 +1041,102 @@ async def notify_toggle(c: CallbackQuery):
 
 @router.callback_query(F.data == "pf:api")
 async def api_screen(c: CallbackQuery):
+    """The reseller's own dashboard: status, balance, key and what it has done.
+
+    The key is a spoiler rather than plain text — this screen gets opened in
+    front of other people, and a key on screen is a key someone can photograph.
+    """
     if not cfg.api_enabled:
         return await c.answer("The API is turned off.", show_alert=True)
     u = await db.get_user(c.from_user.id)
     key = u["api_key"]
+    use = await db.api_usage(c.from_user.id)
     base = cfg.webapp_url or "https://your-shop-domain"
-    body = (f"🔑 <b>Developer API</b>\n\n"
-            "Buy from your own scripts using your wallet balance.\n\n")
+
+    body = ("📗 <b>Reseller Product API</b>\n\n"
+            "Sell our products from your own site or bot. Orders are delivered "
+            "from our stock and the cost comes off your wallet balance.\n\n"
+            f"{'🟢' if key else '⚪️'} <b>Status:</b> "
+            f"{'Active' if key else 'No key yet'}\n"
+            f"👛 <b>Balance:</b> {cfg.money(u['balance'])}\n")
     if key:
-        body += (f"Your key:\n<code>{esc(key)}</code>\n"
-                 "👆 <i>Tap to copy · treat it like a password</i>\n\n")
+        body += (f"🔑 <b>API key:</b>\n<span class=\"tg-spoiler\">"
+                 f"<code>{esc(key)}</code></span>\n"
+                 f"📦 <b>Orders placed:</b> {use['orders']}\n"
+                 f"💵 <b>Spent (30 days):</b> {cfg.money(use['recent'])}\n\n"
+                 "<i>Tap the hidden key to reveal and copy it.</i>\n\n")
     else:
-        body += "You don't have a key yet.\n\n"
-    body += (f"<blockquote>GET  {base}/api/v1/products\n"
-             f"GET  {base}/api/v1/balance\n"
-             f"POST {base}/api/v1/purchase\n"
-             "     {\"product_id\": 1, \"qty\": 2}\n\n"
-             "Header: X-API-Key: your_key</blockquote>")
+        body += "\nGenerate a key below to get started.\n\n"
+    body += (f"<b>Endpoint</b>\n<code>{esc(base)}/api/v1/</code>\n\n"
+             "<b>Available calls</b>\n"
+             "• Products — <code>GET /api/v1/products</code>\n"
+             "• Balance — <code>GET /api/v1/balance</code>\n"
+             "• Buy — <code>POST /api/v1/purchase</code>\n"
+             "• Orders — <code>GET /api/v1/orders</code>\n"
+             "• One order — <code>GET /api/v1/order/{code}</code>")
     await show(c, body, k.api_kb(bool(key)))
     await c.answer()
 
 
+@router.callback_query(F.data == "pf:apidocs")
+async def api_docs(c: CallbackQuery):
+    """Enough to write a working integration without leaving Telegram."""
+    base = cfg.webapp_url or "https://your-shop-domain"
+    body = (
+        "📗 <b>API documentation</b>\n\n"
+        "Send your key on every request:\n"
+        "<code>X-API-Key: your_key</code>\n"
+        "<i>(or <code>Authorization: Bearer your_key</code>)</i>\n\n"
+
+        "<b>1 · List products</b>\n"
+        f"<code>GET {esc(base)}/api/v1/products</code>\n"
+        "Returns id, name, your price, and stock.\n\n"
+
+        "<b>2 · Check balance</b>\n"
+        f"<code>GET {esc(base)}/api/v1/balance</code>\n\n"
+
+        "<b>3 · Place an order</b>\n"
+        f"<code>POST {esc(base)}/api/v1/purchase</code>\n"
+        "<blockquote>{\n"
+        "  \"product_id\": 1,\n"
+        "  \"qty\": 2,\n"
+        "  \"client_ref\": \"your-order-99\"\n"
+        "}</blockquote>\n"
+        "Delivers instantly and returns the items.\n\n"
+        "{{m_warn}} <b>Always send a client_ref.</b> If your request times out "
+        "you cannot tell whether it went through — repeat the same call with "
+        "the same ref and you get the original order back instead of buying "
+        "twice. The reply carries <code>\"repeated\": true</code>.\n\n"
+
+        "<b>4 · Re-read an order</b>\n"
+        f"<code>GET {esc(base)}/api/v1/order/{{code}}</code>\n"
+        "Works with the order code or your own client_ref, and returns the "
+        "items again — use it if a response was ever lost.\n\n"
+
+        f"<code>GET {esc(base)}/api/v1/orders?limit=20</code> lists recent ones.\n\n"
+
+        "<b>Errors</b>\n"
+        "• <code>401</code> bad key · <code>402</code> not enough balance\n"
+        "• <code>404</code> unknown product · <code>409</code> out of stock\n"
+        "• <code>429</code> rate limited — wait and retry")
+    await show(c, await flair.render(body), k.api_docs_kb())
+    await c.answer()
+
+
+@router.callback_query(F.data == "pf:apidel")
+async def api_delete(c: CallbackQuery):
+    await db.ex("UPDATE users SET api_key = '' WHERE tg_id = ?", (c.from_user.id,))
+    await c.answer("Key deleted — any integration using it stops now.",
+                   show_alert=True)
+    await api_screen(with_data(c, "pf:api"))
+
+
 @router.callback_query(F.data == "pf:apikey")
 async def api_rotate(c: CallbackQuery):
+    had = (await db.get_user(c.from_user.id))["api_key"]
     await db.issue_api_key(c.from_user.id)
-    await c.answer("New key issued — the old one stopped working.", show_alert=True)
+    await c.answer("New key issued — the old one stopped working." if had
+                   else "Key generated.", show_alert=True)
     await api_screen(with_data(c, "pf:api"))
 
 
