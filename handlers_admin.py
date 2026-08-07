@@ -495,8 +495,24 @@ async def reset_cmd(m: Message, state: FSMContext):
     stats = await db.stats()
     counts = await db.order_counts()
 
+    # Deposit addresses are derived from the seed and survive anything, but the
+    # record of *which* ones took money lives on the order rows. Sweep first or
+    # you will be checking accounts one by one to find the funds.
+    held = await db.q1(
+        "SELECT COUNT(DISTINCT pay_address) a, "
+        "COALESCE(SUM(COALESCE(received, 0)), 0) s FROM orders "
+        "WHERE pay_address IS NOT NULL AND pay_address != '' "
+        "AND status IN ('paid', 'delivered', 'credited')")
+    unswept = ""
+    if held and held["a"]:
+        unswept = (f"{{{{m_warn}}}} <b>{held['a']} deposit address(es)</b> took "
+                   f"{cfg.money(held['s'])} in total. Your seed still controls "
+                   f"them, but <b>/wallet reads from orders</b> — after this it "
+                   f"can't tell you which ones hold funds. Sweep first, or note "
+                   f"them down.\n\n")
+
     if arg not in ("RESET", "RESET BALANCES"):
-        return await m.answer(
+        return await m.answer(await flair.render(
             "♻️ <b>Reset sales history</b>\n\n"
             f"This deletes <b>{counts['all']} order(s)</b> and all withdrawal "
             f"records, and starts numbering again at <b>#1</b>.\n"
@@ -506,10 +522,11 @@ async def reset_cmd(m: Message, state: FSMContext):
             "<b>Sold stock stays sold</b> — those items went to somebody, and "
             "reselling the same key is worse than losing the count. Use "
             "<i>Clear sold rows</i> on a product to remove them.\n\n"
+            f"{unswept}"
             "Run <code>/backup</code> first — this cannot be undone.\n\n"
             "To confirm, send:\n<code>/reset RESET</code>\n\n"
             "To also zero every wallet balance and referral earning:\n"
-            "<code>/reset RESET BALANCES</code>")
+            "<code>/reset RESET BALANCES</code>"))
 
     wipe_balances = arg == "RESET BALANCES"
     done = await db.reset_sales(clear_balances=wipe_balances)
@@ -521,6 +538,52 @@ async def reset_cmd(m: Message, state: FSMContext):
                      f"in total).")
     log.warning("sales history reset by admin %s (balances=%s)",
                 m.from_user.id, wipe_balances)
+    await m.answer("\n".join(lines), reply_markup=k.back())
+
+
+@router.message(Command("addresses"))
+async def addresses_cmd(m: Message, state: FSMContext):
+    """Every deposit address this shop has issued, derived from the xpub.
+
+    Deliberately independent of the orders table: /wallet answers "which
+    accounts hold money", which needs order data, while this answers "which
+    addresses are mine", which needs only the seed. That distinction matters
+    after a reset, or if the database is ever lost entirely.
+    """
+    await state.clear()
+    import hdwallet
+    if not hdwallet.ready():
+        return await m.answer(
+            f"Per-order addresses are off — {esc(hdwallet.problem())}.")
+
+    try:
+        nxt = int(await db.setting("hd:next_index", "0") or 0)
+    except ValueError:
+        nxt = 0
+    arg = (m.text or "").partition(" ")[2].strip()
+    count = int(arg) if arg.isdigit() else nxt
+    count = max(1, min(count, 100))
+
+    # what each one received, where the orders still exist
+    got: dict[str, float] = {}
+    for r in await db.q(
+            "SELECT pay_address, COALESCE(SUM(COALESCE(received, amount)), 0) s "
+            "FROM orders WHERE pay_address IS NOT NULL AND pay_address != '' "
+            "AND status IN ('paid', 'delivered', 'credited') GROUP BY pay_address"):
+        got[r["pay_address"].lower()] = float(r["s"] or 0)
+
+    lines = [f"🔑 <b>Deposit addresses</b> — {count} of {nxt} issued\n",
+             f"<i>Path {esc(hdwallet.PATH.format(i='N'))}. Import the seed into "
+             f"MetaMask; account number = index + 1.</i>\n"]
+    for i, addr in hdwallet.preview(count, 0):
+        had = got.get(addr.lower(), 0)
+        lines.append(f"<b>{i + 1}.</b> <code>{esc(addr)}</code>"
+                     + (f" — {cfg.money(had)}" if had else ""))
+    if nxt > count:
+        lines.append(f"\n<i>Showing the first {count}. Send "
+                     f"<code>/addresses {min(nxt, 100)}</code> for more.</i>")
+    lines.append("\n<i>These come from your seed, not the database — this list "
+                 "is the same after a reset or a rebuild.</i>")
     await m.answer("\n".join(lines), reply_markup=k.back())
 
 

@@ -167,6 +167,7 @@ ADMIN_COMMANDS = USER_COMMANDS + [
     ("announcetest", "Check group announcement setup"),
     ("user", "Look up a buyer by username or id"),
     ("reset", "Clear sales history and renumber orders"),
+    ("addresses", "Every deposit address from your seed"),
 ]
 
 
