@@ -326,6 +326,16 @@ async def announce_restocks(bot: Bot) -> None:
         if was != now:
             await db.set_setting(f"restock:instock:{pid}", now)
 
+        # price is tracked the same way as stock: compare against what was last
+        # seen, so a change made through any panel is caught
+        price = round(float(p["price"] or 0), 2)
+        try:
+            old_price = float(await db.setting(f"restock:price:{pid}", "") or 0)
+        except ValueError:
+            old_price = 0.0
+        if price != old_price:
+            await db.set_setting(f"restock:price:{pid}", f"{price:.2f}")
+
         if first_run:
             # everything that already exists counts as known, new or not
             await db.set_setting(f"restock:new:{pid}", "1")
@@ -339,6 +349,10 @@ async def announce_restocks(bot: Bot) -> None:
             kind = "newproduct_group"
         elif was == "0":
             kind = "restock_group"
+        elif old_price and price < old_price - 0.009:
+            # cheaper than last time. A rise is recorded silently — nobody
+            # wants an announcement that their shop got more expensive.
+            kind = "pricedrop_group"
         else:
             continue
 
@@ -349,10 +363,13 @@ async def announce_restocks(bot: Bot) -> None:
             desc = (p["description"] or "").strip()
             if len(desc) > 400:
                 desc = desc[:400].rsplit(" ", 1)[0] + "…"
+            off = int(round((old_price - price) / old_price * 100)) if old_price else 0
             body = await texts.t(
                 kind,
                 product=flair.product_tag(p),
                 price=cfg.money(p["price"]),
+                was=cfg.money(old_price),
+                percent=f"{off}%",
                 stock="∞" if p["infinite"] else avail,
                 desc=f"\n<blockquote expandable>{_esc(desc)}</blockquote>\n"
                      if desc else "")
@@ -364,8 +381,10 @@ async def announce_restocks(bot: Bot) -> None:
                     style="primary", icon_slot="buy")]))
             log.info("%s announced for product %s", kind, pid)
 
-            if kind == "newproduct_group":
-                await _pin_announcement(bot, chat, sent.message_id)
+            if kind in ("newproduct_group", "pricedrop_group"):
+                # separate slots, so a price drop replaces the last price drop
+                # rather than knocking the newest product off the pin bar
+                await _pin_announcement(bot, chat, sent.message_id, kind)
         except Exception as e:
             log.warning("announcement failed for %s: %s", pid, e)
 
@@ -373,21 +392,26 @@ async def announce_restocks(bot: Bot) -> None:
         await db.set_setting("restock:bootstrapped", "1")
 
 
-async def _pin_announcement(bot: Bot, chat: str, msg_id: int) -> None:
-    """Pin the newest arrival and unpin the one it replaces.
+async def _pin_announcement(bot: Bot, chat: str, msg_id: int,
+                            slot: str = "newproduct_group") -> None:
+    """Pin an announcement and unpin the one it replaces.
 
-    Telegram allows many pins at once, so without unpinning the bar fills up
-    and the newest product ends up the least visible thing in it. Pinned
-    silently — the announcement itself already notified the group, and a second
-    ping for the same event is what makes people mute a shop.
+    One slot per kind: the newest product and the latest price drop can both
+    be pinned, but a second price drop replaces the first. Telegram allows many
+    pins at once, so without this the bar fills up and the things worth seeing
+    end up the least visible in it.
+
+    Pinned silently — the announcement itself already notified the group, and a
+    second ping for the same event is what makes people mute a shop.
 
     Failure is logged, not raised: the announcement has already landed, and a
     missing pin permission shouldn't look like a broken announcement.
     """
-    prev = await db.setting("restock:pinned", "")
+    key = f"restock:pinned:{slot}"
+    prev = await db.setting(key, "")
     try:
         await bot.pin_chat_message(chat, msg_id, disable_notification=True)
-        await db.set_setting("restock:pinned", str(msg_id))
+        await db.set_setting(key, str(msg_id))
     except Exception as e:
         log.warning("could not pin in %s — the bot needs pin rights there: %s",
                     chat, e)

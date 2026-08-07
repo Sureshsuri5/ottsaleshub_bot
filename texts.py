@@ -101,6 +101,13 @@ MESSAGES: dict[str, Msg] = {
         "{{g_title}} Tap below to buy:",
         "New product announcement (group)", "Groups",
         ("product", "price", "stock", "desc")),
+    "pricedrop_group": Msg(
+        "{{m_money}} <b>Price drop — {percent} off</b>\n\n"
+        "{product}\n"
+        "{{g_price}} <s>{was}</s> → <b>{price}</b> · {{g_stock}} {stock} available\n\n"
+        "<i>While stock lasts.</i>",
+        "Price drop announcement (group)", "Groups",
+        ("product", "price", "was", "percent", "stock", "desc")),
     "restock_group": Msg(
         "{{m_box}} <b>Back in stock</b>\n\n"
         "{product}\n"
