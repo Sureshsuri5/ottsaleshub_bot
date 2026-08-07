@@ -341,6 +341,9 @@ async def _migrate() -> None:
         # the cost at the moment of sale. Snapshotted so that changing a
         # product's cost price later doesn't silently rewrite past profit.
         "ALTER TABLE orders ADD COLUMN unit_cost REAL NOT NULL DEFAULT 0",
+        # a reseller's own reference for the request, used to make repeated
+        # purchase calls safe to retry
+        "ALTER TABLE orders ADD COLUMN client_ref TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE products ADD COLUMN unit TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE users ADD COLUMN notify_orders INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE users ADD COLUMN notify_promos INTEGER NOT NULL DEFAULT 1",
@@ -1239,6 +1242,17 @@ async def alert_counts() -> dict:
         "  WHERE status = 'pending') s, "
         "(SELECT COUNT(*) FROM orders WHERE status = 'awaiting_review') v")
     return {"withdrawals": r["c"], "withdraw_total": r["s"], "reviews": r["v"]}
+
+
+async def order_by_client_ref(user_id: int, ref: str):
+    """An order this buyer already created under the same reference."""
+    return await q1("SELECT * FROM orders WHERE user_id = ? AND client_ref = ? "
+                    "ORDER BY id DESC LIMIT 1", (user_id, ref))
+
+
+async def order_by_code(user_id: int, code: str):
+    return await q1("SELECT * FROM orders WHERE user_id = ? "
+                    "AND LOWER(code) = LOWER(?) LIMIT 1", (user_id, code))
 
 
 async def reset_sales(clear_balances: bool = False) -> dict:

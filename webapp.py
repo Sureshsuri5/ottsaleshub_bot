@@ -1039,6 +1039,16 @@ async def v1_purchase(request):
     except (TypeError, ValueError):
         return web.json_response({"error": "product_id and qty must be numbers"}, status=400)
 
+    # Idempotency. A reseller whose request times out has no way to know whether
+    # the purchase happened; retrying could buy twice and not retrying loses the
+    # keys. With a client_ref, a repeat call returns the original order instead
+    # of creating another.
+    ref = str(d.get("client_ref", ""))[:64].strip()
+    if ref:
+        prev = await db.order_by_client_ref(u["tg_id"], ref)
+        if prev:
+            return web.json_response(_v1_order(prev, repeated=True))
+
     p = await db.product(pid)
     if not p or not p["is_active"]:
         return web.json_response({"error": "product not found"}, status=404)
@@ -1053,7 +1063,8 @@ async def v1_purchase(request):
 
     oid = await db.create_order(
         user_id=u["tg_id"], kind="purchase", product_id=pid, product_name=p["name"],
-        qty=qty, amount=amount, provider="balance", pay_amount=amount, pay_unit=cfg.fiat)
+        qty=qty, amount=amount, provider="balance", pay_amount=amount,
+        pay_unit=cfg.fiat, client_ref=ref)
     await db.add_balance(u["tg_id"], -amount)
     ok = await delivery.settle(request.app["bot"], oid)
     o = await db.order(oid)
@@ -1061,10 +1072,62 @@ async def v1_purchase(request):
         return web.json_response({"error": "could not fulfil, balance refunded",
                                   "order_id": oid}, status=409)
     return web.json_response({
-        "order_id": oid, "product": p["name"], "qty": qty, "charged": amount,
-        "items": (o["delivered_text"] or "").split("\n"),
+        **_v1_order(o),
         "balance": (await db.get_user(u["tg_id"]))["balance"],
     })
+
+
+def _v1_order(o, repeated: bool = False) -> dict:
+    """One order in the shape the developer API returns everywhere."""
+    out = {
+        "order_id": o["id"],
+        "code": o["code"],
+        "product": o["product_name"],
+        "qty": o["qty"],
+        "charged": o["amount"],
+        "status": o["status"],
+        "created_at": o["created_at"],
+        "items": [ln for ln in (o["delivered_text"] or "").split("\n") if ln.strip()],
+    }
+    if o["client_ref"]:
+        out["client_ref"] = o["client_ref"]
+    if repeated:
+        # so a caller can tell a replay from a fresh purchase
+        out["repeated"] = True
+    return out
+
+
+async def v1_orders(request):
+    """Recent orders for this key. Lets a reseller reconcile after a crash."""
+    u, err = await api_auth(request)
+    if err:
+        return err
+    try:
+        limit = max(1, min(int(request.query.get("limit", 20)), 100))
+    except ValueError:
+        limit = 20
+    rows_ = await db.q(
+        "SELECT * FROM orders WHERE user_id = ? AND kind = 'purchase' "
+        "ORDER BY id DESC LIMIT ?", (u["tg_id"], limit))
+    return web.json_response({"orders": [_v1_order(r) for r in rows_]})
+
+
+async def v1_order(request):
+    """One order by its code, with the delivered items.
+
+    The items are returned again on every call rather than once: if the
+    original response was lost, this is the only way the buyer gets them back.
+    """
+    u, err = await api_auth(request)
+    if err:
+        return err
+    code = request.match_info["code"]
+    o = await db.order_by_code(u["tg_id"], code)
+    if not o:
+        o = await db.order_by_client_ref(u["tg_id"], code)
+    if not o:
+        return web.json_response({"error": "order not found"}, status=404)
+    return web.json_response(_v1_order(o))
 
 
 # ------------------------------------------------------------------ wiring
@@ -1234,6 +1297,8 @@ def build_app(bot: Bot) -> web.Application:
     r.add_get("/api/v1/products", v1_products)
     r.add_get("/api/v1/balance", v1_balance)
     r.add_post("/api/v1/purchase", v1_purchase)
+    r.add_get("/api/v1/orders", v1_orders)
+    r.add_get("/api/v1/order/{code}", v1_order)
 
     r.add_static("/static/", STATIC)
     return app
