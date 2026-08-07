@@ -150,6 +150,7 @@ USER_COMMANDS = [
     ("menu", "Main menu"),
     ("order", "Look up an order by its ID"),
     ("orders", "Your past orders"),
+    ("rules", "How the shop works"),
 ]
 # Not published to Telegram — see _publish_commands(). Kept as the one place
 # that lists what an admin can type, so it doesn't drift out of the README.

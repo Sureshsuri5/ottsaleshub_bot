@@ -139,6 +139,62 @@ MESSAGES: dict[str, Msg] = {
         "network — funds sent to the wrong network cannot be recovered.\n\n"
         "Contact support before ordering if anything here is unclear.",
         "Terms &amp; conditions (Mini App)", "Shop", ()),
+    "rules": Msg(
+        "{{m_info}} <b>How this shop works</b>\n\n"
+
+        "<b>Commands</b>\n"
+        "/start — open the shop\n"
+        "/menu — main menu\n"
+        "/orders — everything you've bought\n"
+        "/order — look up one order by its ID\n"
+        "/rules — this message\n\n"
+
+        "<b>Buying</b>\n"
+        "Pick a product, choose how many, then choose how to pay. Your wallet "
+        "balance is always used first — if it doesn't cover the whole order, "
+        "you pay the rest on any method and the two are combined.\n\n"
+
+        "<b>Paying with crypto</b>\n"
+        "Every order gets its own address. Send to the address shown on your "
+        "order and nowhere else — an address from an older order will not "
+        "credit this one.\n"
+        "{{m_warn}} Send on the network named on the screen. Funds sent on a "
+        "different network cannot be recovered.\n"
+        "Payment is detected automatically, usually within a minute. If you "
+        "have the transaction hash you can send it with the button on the "
+        "payment screen to speed it up.\n\n"
+
+        "<b>If you send the wrong amount</b>\n"
+        "Too little — nothing is lost. You'll be told how much is still owed, "
+        "and sending the rest to the same address completes the order.\n"
+        "Too much — the difference is added to your wallet balance.\n"
+        "After the order expired — it becomes wallet balance you can spend on "
+        "a new order.\n\n"
+
+        "<b>Delivery</b>\n"
+        "Automatic, the moment payment confirms. Your items are in the "
+        "confirmation message and in /orders forever, so nothing is lost if "
+        "you clear the chat.\n\n"
+
+        "<b>Out of stock</b>\n"
+        "Tap <i>Notify me when back in stock</i> on the product page and "
+        "you'll get a message the moment it returns.\n\n"
+
+        "<b>Refer &amp; Earn</b>\n"
+        "Share your link from the menu. You earn on what the people you invite "
+        "spend, and can move those earnings to your wallet at any time.\n\n"
+
+        "<b>Rules</b>\n"
+        "• One account per person.\n"
+        "• All sales are final. Replacements only where the product page says "
+        "so, and only within the stated warranty.\n"
+        "• Read a product's description and note before paying — they say what "
+        "is and isn't covered.\n"
+        "• Chargebacks or payment disputes lead to a ban.\n\n"
+
+        "Something went wrong with an order? Contact support with your order "
+        "ID and we'll sort it out.",
+        "Rules / how to use the bot", "Support", ()),
     "maintenance": Msg(
         "{{m_warn}} <b>Under maintenance</b>\n\n"
         "The shop is briefly closed for updates. Nothing you've already paid "

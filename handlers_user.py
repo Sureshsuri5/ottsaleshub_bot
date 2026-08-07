@@ -1198,6 +1198,19 @@ async def withdraw_list(c: CallbackQuery):
     await c.answer()
 
 
+@router.message(Command("rules"))
+async def rules_cmd(m: Message, state: FSMContext):
+    """How the shop works, in one message the buyer can be pointed at.
+
+    Editable in /texts like everything else, so the rules can change without a
+    deploy — and so the shop's actual policy, not this default, is what buyers
+    are held to.
+    """
+    await state.clear()
+    await m.answer(await texts.t("rules"),
+                   reply_markup=k.support_kb() if cfg.support_url else k.home_kb())
+
+
 @router.message(Command("orders"))
 async def orders_cmd(m: Message, state: FSMContext):
     """The same order history the profile links to, one command away.
