@@ -504,3 +504,21 @@ img.brandmark { object-fit: cover; }
 .msgrow > summary code { font-size: 10.5px; color: var(--muted); }
 .msgrow textarea { margin: 0; font-size: 13px; }
 
+
+/* ---- settings rows ---------------------------------------------------
+   A switch on the right, its name on the left, and one short line of help
+   underneath. The old layout put a paragraph inside the label, which made
+   every toggle look like a page of terms. */
+.tog {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 11px 0; border-bottom: 1px solid var(--line);
+}
+.tog:last-of-type { border-bottom: 0; }
+.tog > span { flex: 1; min-width: 0; font-size: 14px; }
+.tog input[type="checkbox"] { flex: 0 0 auto; width: 20px; height: 20px; margin: 0; }
+.tog.sub2 { padding: 7px 0 7px 18px; border-bottom: 0; }
+.tog.sub2 > span { font-size: 13px; color: var(--muted); }
+.hint {
+  font-size: 12px; color: var(--muted); line-height: 1.45; margin-top: 2px;
+}
+label + .hint { margin: -4px 0 6px; }

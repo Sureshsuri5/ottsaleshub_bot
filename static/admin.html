@@ -411,11 +411,18 @@ function productView(pid) {
               <div class="wcard">
                 <div class="wtop">
                   <span class="wname">${i + 1}.</span>
-                  <button class="whide" data-delstock="${it.id}" title="Remove">✕</button>
+                  <span>
+                    <button class="whide" data-copystock="${esc(it.payload)}"
+                            title="Copy">📋</button>
+                    <button class="whide" data-delstock="${it.id}"
+                            title="Remove">✕</button>
+                  </span>
                 </div>
                 <code class="waddr">${esc(it.payload)}</code>
               </div>`).join('')
             + `<p class="sub">${rows.length} unsold${r.sold ? ` · ${r.sold} sold` : ''}</p>`;
+        box.querySelectorAll('[data-copystock]').forEach((b) => b.onclick = () =>
+          copy(b.dataset.copystock, 'Copied'));
         box.querySelectorAll('[data-delstock]').forEach((b) => b.onclick = () =>
           confirmDelete('Remove this item?',
             'It has not been sold, so nobody loses anything.', async () => {
@@ -873,88 +880,67 @@ function moreView() {
       <button id="send" style="margin-top:8px">Send broadcast</button>
 
       <h2>Shop status</h2>
-      <p class="sub">Switches that change what buyers can reach right now.</p>
-      <label class="row" style="justify-content:space-between">
-        <span><b>Maintenance mode</b><br>
-          <i class="muted">Closes the shop for everyone but admins. Payments
-          already in flight are still delivered.</i></span>
-        <input type="checkbox" id="maint" ${f.maintenance ? 'checked' : ''}>
+      <label class="tog">
+        <span><b>Shop open</b><div class="hint">Off = closed to everyone but you</div></span>
+        <input type="checkbox" id="maint" ${f.maintenance ? '' : 'checked'}>
       </label>
-
-      <label class="row" style="justify-content:space-between">
-        <span><b>Mini App</b><br>
-          <i class="muted">Off hides the Open Mini App button and closes the
-          storefront. The bot's chat menus keep working. This panel is
-          unaffected.</i></span>
+      <label class="tog">
+        <span><b>Mini App</b><div class="hint">Off = chat only, no storefront</div></span>
         <input type="checkbox" id="miniapp" ${f.miniapp_enabled ? 'checked' : ''}>
       </label>
-
-      <label class="row" style="justify-content:space-between">
-        <span><b>Menu button opens the Mini App</b><br>
-          <i class="muted">Off lists the bot's commands instead. The Mini App
-          is still reachable from the menu.</i></span>
+      <label class="tog">
+        <span><b>Menu button opens the Mini App</b>
+          <div class="hint">Off = shows the command list</div></span>
         <input type="checkbox" id="menubtn" ${f.menu_button ? 'checked' : ''}>
       </label>
 
-
       <h2>Payment methods</h2>
-      <p class="sub" style="margin-top:0">Switch a rail off to hide it from
-        buyers and stop polling it. Wallet balance can't be switched off —
-        it's where deposits land. A rail marked <i>not configured</i> stays
-        hidden until you add its account details.</p>
+      <p class="sub">Off hides a rail from buyers. Wallet balance is always on.</p>
       <div id="rails">
         ${(f.rails || []).map((r) => `
-          <label class="row" style="justify-content:space-between">
-            <span>${esc(r.title)}${r.ready ? '' : ' <i class="muted">— not configured</i>'}</span>
+          <label class="tog">
+            <span><b>${esc(r.title)}</b>${r.ready ? ''
+              : '<div class="hint">Not configured — add its account details first</div>'}</span>
             <input type="checkbox" class="rail" data-code="${esc(r.code)}"
                    ${r.on ? 'checked' : ''}>
           </label>
           ${r.split ? `
-          <label class="row" style="justify-content:space-between;padding-left:18px">
-            <span class="muted small">— deposits</span>
+          <label class="tog sub2">
+            <span>Deposits</span>
             <input type="checkbox" class="rail-topup" data-code="${esc(r.code)}"
                    ${r.topup ? 'checked' : ''}>
           </label>
-          <label class="row" style="justify-content:space-between;padding-left:18px">
-            <span class="muted small">— purchases</span>
+          <label class="tog sub2">
+            <span>Purchases</span>
             <input type="checkbox" class="rail-buy" data-code="${esc(r.code)}"
                    ${r.purchase ? 'checked' : ''}>
           </label>` : ''}`).join('')}
       </div>
 
+      <h2>Group posts</h2>
 
-      <h2>Sales feed &amp; announcements</h2>
-      <p class="sub">Where the bot posts to your group. The buyer's name,
-        username and id never leave the bot — only a hashed tag, so repeat
-        buyers look consistent without being identifiable.</p>
       <label>Sales feed group</label>
-      <p class="sub" style="margin-top:0">A post for every sale. Leave blank to
-        switch the feed off.</p>
+      <div class="hint">A post for every sale. Blank = off.</div>
       <input id="feed" placeholder="-1001234567890" value="${esc(f.sales_chat)}">
+
       <label>Announcements group</label>
+      <div class="hint">New products, restocks, price drops. Blank = same as above.</div>
       <input id="restock" placeholder="same as above"
              value="${esc(f.restock_chat || '')}">
-      <p class="sub" style="margin-top:6px">Where "new product" and "back in
-        stock" notices are posted, each with a Buy button. Leave blank to use
-        the group above. The bot must be a member and able to post.</p>
-      <label>Message template</label>
+
+      <label>Sale post wording</label>
       <textarea id="tpl" style="min-height:60px">${esc(f.sale_template)}</textarea>
-      <p class="sub" style="margin-top:6px">Placeholders: <code>{qty}</code>
-        <code>{product}</code> <code>{name}</code> <code>{amount}</code>
-        <code>{provider}</code> <code>{buyer}</code>. The buyer tag is hashed —
-        it never reveals an account.</p>
-      <div class="between card">
-        <span class="small">Add a "Open shop" button to each post</span>
+      <div class="hint">{qty} {product} {name} {amount} {provider} {buyer} —
+        the buyer tag is hashed, it never reveals an account.</div>
+
+      <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:10px">
         <button class="mini ${f.sale_button === '1' ? '' : 'ghost'}" id="saleBtn">
-          ${f.sale_button === '1' ? 'On' : 'Off'}</button>
-      </div>
-      <div class="between card" style="margin-top:10px">
-        <span class="small">Hide the amount in the feed</span>
+          ${f.sale_button === '1' ? '✓ Shop button on posts' : 'Shop button on posts'}</button>
         <button class="mini ${f.hide_amount === '1' ? '' : 'ghost'}" id="hideAmt">
-          ${f.hide_amount === '1' ? 'Hidden' : 'Shown'}</button>
+          ${f.hide_amount === '1' ? '✓ Amount hidden' : 'Amount shown'}</button>
       </div>
-      <div class="row" style="gap:8px;margin-top:8px">
-        <button class="mini" id="saveFeed">Save feed</button>
+      <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button class="mini" id="saveFeed">Save</button>
         <button class="ghost mini" id="testFeed">Send test post</button>
       </div>
 
@@ -1074,7 +1060,8 @@ function moreView() {
         .filter((i) => !i.checked).map((i) => i.dataset.code);
       const out = { menu_button: view.querySelector('#menubtn').checked,
                     miniapp_enabled: view.querySelector('#miniapp').checked,
-                    maintenance: view.querySelector('#maint').checked,
+                    // the switch reads "Shop open", the setting is "maintenance"
+                    maintenance: !view.querySelector('#maint').checked,
                     rails_disabled: unchecked('.rail'),
                     rails_off_topup: unchecked('.rail-topup'),
                     rails_off_purchase: unchecked('.rail-buy'),
