@@ -185,7 +185,11 @@ def verify_login_widget(data: dict) -> dict | None:
 
 
 # Screens a visitor can see before signing in — the shopfront, nothing personal.
-PUBLIC_PATHS = {"/api/me", "/api/catalog", "/api/auth/telegram"}
+# Reachable without a session — they are how you *get* one. The sign-in and
+# one-time-link endpoints have to be here or the middleware rejects them before
+# the password is ever checked, which looks exactly like a wrong password.
+PUBLIC_PATHS = {"/api/me", "/api/catalog", "/api/auth/telegram",
+                "/api/panel/auth", "/api/panel/login"}
 
 
 @web.middleware
