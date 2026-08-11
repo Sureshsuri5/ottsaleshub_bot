@@ -50,7 +50,8 @@
 
 <script type="module">
 import { tg, boot, api, toast, copy, haptic, esc, money, setSymbol, gauge, inTelegram,
-         statusPill, pushScreen, replaceScreen, refresh } from '/static/tg.js';
+         statusPill, pushScreen, replaceScreen, refresh,
+         claimLoginLink, session } from '/static/tg.js';
 
 boot();
 const view = document.getElementById('view');
@@ -84,6 +85,7 @@ document.querySelectorAll('.tabs button').forEach((b) => {
 async function init() {
   loading();
   try {
+    await claimLoginLink();
     me = await api('/me');
     setSymbol(me.symbol);
     if (!me.admin) throw new Error('This account is not an admin.');
@@ -96,6 +98,9 @@ async function init() {
     const browser = !inTelegram();
     const msg = e.message || 'Something went wrong.';
     const notAdmin = /not an admin/i.test(msg);
+    // In a browser with no session, offer a sign-in form rather than an error.
+    // An admin arriving at the panel wants a way in, not an explanation.
+    if (browser && !session.get()) return signInForm();
     html(`<div class="empty">
       <b>${notAdmin ? 'Not an admin account' : browser ? "Can't open the panel" : 'No access'}</b>
       ${esc(msg)}
@@ -517,6 +522,47 @@ function productView(pid) {
                     toast('Product deleted'); catalogView(); }));
   });
 }
+
+function signInForm(note) {
+  html(`
+    <h1>Admin sign in</h1>
+    ${note ? `<p class="sub">${esc(note)}</p>` : ''}
+    <label>Email</label>
+    <input id="li_email" type="email" autocomplete="username" placeholder="you@example.com">
+    <label>Password</label>
+    <input id="li_pw" type="password" autocomplete="current-password" placeholder="••••••••••">
+    <button id="li_go" style="margin-top:12px">Sign in</button>
+    <p class="sub" style="margin-top:14px">No password yet? Send
+      <code>/setlogin you@example.com yourpassword</code> to the bot, or
+      <code>/panel</code> for a one-time link.</p>`);
+
+  const go = async () => {
+    const email = view.querySelector('#li_email').value.trim();
+    const password = view.querySelector('#li_pw').value;
+    if (!email || !password) return toast('Email and password, please', 'err');
+    const b = view.querySelector('#li_go');
+    b.disabled = true;
+    try {
+      const r = await fetch('/api/panel/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Sign in failed');
+      session.set(d.session);
+      location.reload();
+    } catch (err) {
+      b.disabled = false;
+      view.querySelector('#li_pw').value = '';
+      toast(err.message, 'err');
+    }
+  };
+  on('#li_go', 'click', go);
+  view.querySelector('#li_pw').addEventListener('keydown',
+    (e) => { if (e.key === 'Enter') go(); });
+}
+
 
 function confirmDelete(title, detail, run) {
   // Telegram's dialog only works inside a Telegram client. In a browser the

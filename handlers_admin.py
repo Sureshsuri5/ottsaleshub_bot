@@ -541,6 +541,75 @@ async def reset_cmd(m: Message, state: FSMContext):
     await m.answer("\n".join(lines), reply_markup=k.back())
 
 
+@router.message(Command("setlogin"))
+async def setlogin_cmd(m: Message, state: FSMContext):
+    """Create or change an email/password login for the panel.
+
+    Set from inside Telegram rather than a public sign-up page: the only people
+    who should ever get a panel account are already admins here, and a form on
+    the open internet is one more thing to defend.
+    """
+    await state.clear()
+    import webapp
+    parts = (m.text or "").split()
+    if len(parts) == 2 and parts[1].lower() == "list":
+        rows = await db.admin_logins()
+        if not rows:
+            return await m.answer("No panel logins yet.")
+        lines = ["🔐 <b>Panel logins</b>\n"]
+        for r in rows:
+            lines.append(f"• <code>{esc(r['email'])}</code> — "
+                         f"last used {esc(r['last_login'] or 'never')}")
+        return await m.answer("\n".join(lines), reply_markup=k.back())
+    if len(parts) == 3 and parts[1].lower() == "remove":
+        n = await db.drop_admin_login(parts[2])
+        return await m.answer("Removed." if n else "No login with that email.")
+    if len(parts) != 3:
+        return await m.answer(
+            "🔐 <b>Panel login</b>\n\n"
+            "<code>/setlogin you@example.com yourpassword</code>\n\n"
+            "<code>/setlogin list</code> — who can sign in\n"
+            "<code>/setlogin remove you@example.com</code>\n\n"
+            "<i>Use at least 10 characters. Delete this message afterwards — "
+            "the password stays in your chat history otherwise.</i>")
+
+    email, password = parts[1].strip().lower(), parts[2]
+    if "@" not in email or "." not in email.split("@")[-1]:
+        return await m.answer("That doesn't look like an email address.")
+    if len(password) < 10:
+        return await m.answer("Use at least 10 characters — a short password on "
+                              "an internet-facing panel is the whole problem.")
+
+    await db.set_admin_login(email, webapp.hash_password(password), m.from_user.id)
+    base = (cfg.webapp_url or "").rstrip("/")
+    await m.answer(
+        f"✅ Login set for <code>{esc(email)}</code>.\n\n"
+        f"Sign in at <code>{esc(base + cfg.admin_path)}</code>\n\n"
+        "{{m_warn}} <b>Delete your message above</b> — it has your password in it.",
+        reply_markup=k.back())
+
+
+@router.message(Command("panel"))
+async def panel_cmd(m: Message, state: FSMContext):
+    """A one-time link into the admin panel.
+
+    Replaces pasting ADMIN_PANEL_TOKEN into a URL, which sat in browser
+    history, in screenshots and on screen while you worked. This expires in two
+    minutes, works once, and only for an admin.
+    """
+    await state.clear()
+    import webapp
+    base = (cfg.webapp_url or "").rstrip("/")
+    if not base:
+        return await m.answer("WEBAPP_URL isn't set, so there's no panel to link to.")
+    link = f"{base}{cfg.admin_path}?t={webapp.issue_login(m.from_user.id)}"
+    await m.answer(
+        "🔐 <b>Admin panel</b>\n\n"
+        f"<a href=\"{esc(link)}\">Open the panel</a>\n\n"
+        "<i>Valid for 2 minutes, once. Send /panel again for a new one.</i>",
+        reply_markup=k.back(), disable_web_page_preview=True)
+
+
 @router.message(Command("addresses"))
 async def addresses_cmd(m: Message, state: FSMContext):
     """Every deposit address this shop has issued, derived from the xpub.

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import secrets
 import json
 import asyncio
 import logging
@@ -74,6 +75,81 @@ def issue_session(uid: int) -> str:
     exp = int(time.time()) + SESSION_TTL
     body = f"{uid}.{exp}"
     return f"{body}.{_sign(body)}"
+
+
+# A login link is good for two minutes and one use. Short because it travels
+# through Telegram and sits in a chat; single-use because a link that still
+# works after you've clicked it is a password with extra steps.
+LOGIN_TTL = 120
+
+# Password hashing. scrypt is in the standard library, so no dependency, and
+# it is memory-hard — a leaked table can't be brute-forced with a GPU the way
+# a plain SHA-256 table can.
+_SCRYPT = dict(n=2 ** 14, r=8, p=1)
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    dk = hashlib.scrypt(password.encode(), salt=salt, dklen=32, **_SCRYPT)
+    return f"scrypt${salt.hex()}${dk.hex()}"
+
+
+def check_password(password: str, stored: str) -> bool:
+    try:
+        algo, salt_hex, want = stored.split("$")
+        if algo != "scrypt":
+            return False
+        dk = hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt_hex),
+                            dklen=32, **_SCRYPT)
+    except Exception:
+        return False
+    return hmac.compare_digest(dk.hex(), want)
+
+
+# Login attempts per email and per IP. Password guessing is only practical at
+# volume, so the cheapest real defence is refusing to answer quickly.
+_TRIES: dict[str, list[float]] = {}
+LOGIN_TRIES, LOGIN_WINDOW = 5, 300
+
+
+def _login_ok(key: str) -> bool:
+    now = time.time()
+    hits = [t for t in _TRIES.get(key, []) if now - t < LOGIN_WINDOW]
+    _TRIES[key] = hits
+    if len(hits) >= LOGIN_TRIES:
+        return False
+    hits.append(now)
+    return True
+
+
+def issue_login(uid: int) -> str:
+    exp = int(time.time()) + LOGIN_TTL
+    nonce = secrets.token_urlsafe(9)
+    body = f"{uid}.{exp}.{nonce}"
+    return f"{body}.{_sign('login:' + body)}"
+
+
+async def redeem_login(token: str) -> int | None:
+    """Turn a one-time link into a user id, or None if it can't be used.
+
+    Burning the nonce before returning means a link forwarded to someone else,
+    or replayed from history, is already spent.
+    """
+    try:
+        uid, exp, nonce, sig = token.split(".")
+    except (AttributeError, ValueError):
+        return None
+    if not hmac.compare_digest(_sign(f"login:{uid}.{exp}.{nonce}"), sig):
+        return None
+    if int(exp) < time.time():
+        return None
+    if not cfg.is_admin(int(uid)):
+        return None
+    key = f"panel:used:{nonce}"
+    if await db.setting(key, ""):
+        return None
+    await db.set_setting(key, str(int(time.time())))
+    return int(uid)
 
 
 def read_session(token: str) -> int | None:
@@ -1010,6 +1086,48 @@ async def api_rate_limit(request: web.Request, handler):
     return await handler(request)
 
 
+async def panel_login(request):
+    """Exchange a one-time link for a session."""
+    d = await body(request)
+    uid = await redeem_login(str(d.get("t", "")))
+    if not uid:
+        return web.json_response(
+            {"error": "That login link has expired or been used. "
+                      "Send /panel to the bot for a new one."}, status=401)
+    log.info("panel login for admin %s", uid)
+    return web.json_response({"session": issue_session(uid)})
+
+
+async def panel_auth(request):
+    """Email and password login.
+
+    Wrong email and wrong password give the same answer, so this can't be used
+    to discover which addresses exist.
+    """
+    d = await body(request)
+    email = str(d.get("email", "")).strip().lower()[:120]
+    password = str(d.get("password", ""))[:200]
+    ip = request.headers.get("X-Forwarded-For", request.remote or "?").split(",")[0]
+
+    if not _login_ok(f"ip:{ip}") or not _login_ok(f"em:{email}"):
+        log.warning("panel login rate limited for %s / %s", ip, email)
+        return web.json_response(
+            {"error": "Too many attempts. Wait five minutes."}, status=429)
+
+    row = await db.admin_login(email) if email else None
+    if not row or not check_password(password, row["pw_hash"]):
+        log.warning("failed panel login for %r from %s", email, ip)
+        return web.json_response({"error": "Wrong email or password."}, status=401)
+    if not cfg.is_admin(int(row["tg_id"])):
+        return web.json_response({"error": "That account is no longer an admin."},
+                                 status=403)
+
+    await db.touch_admin_login(email)
+    _TRIES.pop(f"em:{email}", None)
+    log.info("panel login by %s", email)
+    return web.json_response({"session": issue_session(int(row["tg_id"]))})
+
+
 async def sms_inbound(request):
     """Bank credit SMS forwarded from a phone.
 
@@ -1364,6 +1482,8 @@ def build_app(bot: Bot) -> web.Application:
         import webhook
         webhook.add_routes(app)
 
+    r.add_post("/api/panel/login", panel_login)
+    r.add_post("/api/panel/auth", panel_auth)
     r.add_post("/sms/inbound", sms_inbound)
     r.add_get("/api/v1/products", v1_products)
     r.add_get("/api/v1/balance", v1_balance)

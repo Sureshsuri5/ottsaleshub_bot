@@ -168,6 +168,8 @@ ADMIN_COMMANDS = USER_COMMANDS + [
     ("user", "Look up a buyer by username or id"),
     ("reset", "Clear sales history and renumber orders"),
     ("addresses", "Every deposit address from your seed"),
+    ("panel", "One-time link into the admin panel"),
+    ("setlogin", "Set an email + password for the panel"),
 ]
 
 

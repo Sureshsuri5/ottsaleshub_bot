@@ -88,6 +88,14 @@ CREATE TABLE IF NOT EXISTS seen_tx (
     seen_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS admin_logins (
+    email      TEXT PRIMARY KEY,
+    pw_hash    TEXT NOT NULL,
+    tg_id      INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_login TEXT
+);
+
 CREATE TABLE IF NOT EXISTS bank_sms (
     utr        TEXT PRIMARY KEY,
     amount     REAL NOT NULL,
@@ -1260,6 +1268,34 @@ async def alert_counts() -> dict:
         "  WHERE status = 'pending') s, "
         "(SELECT COUNT(*) FROM orders WHERE status = 'awaiting_review') v")
     return {"withdrawals": r["c"], "withdraw_total": r["s"], "reviews": r["v"]}
+
+
+async def set_admin_login(email: str, pw_hash: str, tg_id: int) -> None:
+    """Create or replace the password for an email."""
+    email = email.strip().lower()
+    await ex("DELETE FROM admin_logins WHERE LOWER(email) = LOWER(?)", (email,))
+    await ex("INSERT INTO admin_logins (email, pw_hash, tg_id) VALUES (?, ?, ?)",
+             (email, pw_hash, tg_id))
+
+
+async def admin_login(email: str):
+    return await q1("SELECT * FROM admin_logins WHERE LOWER(email) = LOWER(?)",
+                    (email.strip().lower(),))
+
+
+async def touch_admin_login(email: str) -> None:
+    await ex("UPDATE admin_logins SET last_login = datetime('now') "
+             "WHERE LOWER(email) = LOWER(?)", (email.strip().lower(),))
+
+
+async def admin_logins() -> list:
+    return await q("SELECT email, tg_id, created_at, last_login "
+                   "FROM admin_logins ORDER BY email")
+
+
+async def drop_admin_login(email: str) -> int:
+    return await ex_count("DELETE FROM admin_logins WHERE LOWER(email) = LOWER(?)",
+                          (email.strip().lower(),))
 
 
 async def record_sms(utr: str, amount: float, raw: str) -> bool:

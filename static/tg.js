@@ -12,6 +12,25 @@ function attempt(fn) {
   try { fn(); } catch (_) { /* not in Telegram, or an older client */ }
 }
 
+/* A one-time ?t= link from the bot. Exchanged for a session and stripped from
+   the address bar immediately, so it never lands in history or a screenshot. */
+export async function claimLoginLink() {
+  const url = new URL(location.href);
+  const t = url.searchParams.get('t');
+  if (!t) return;
+  url.searchParams.delete('t');
+  history.replaceState({}, '', url);
+  try {
+    const r = await fetch('/api/panel/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ t }),
+    });
+    const d = await r.json();
+    if (d.session) session.set(d.session);
+  } catch (_) { /* the screen's own error handling reports it */ }
+}
+
 export function boot() {
   if (!tg) return;
   attempt(() => tg.ready());
