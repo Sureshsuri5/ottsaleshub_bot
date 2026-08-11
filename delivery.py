@@ -397,7 +397,12 @@ async def announce_restocks(bot: Bot) -> None:
                 product=flair.product_tag(p),
                 price=cfg.money(p["price"]),
                 was=cfg.money(old_price),
-                percent=f"{off}%",
+                percent=f"{off}%",Expand-Archive -Path "$HOME\Downloads\shopbot-panel-password.zip" -DestinationPath "$HOME\Downloads\tmpzip" -Force
+Copy-Item "$HOME\Downloads\tmpzip\smshopbot\*" "$HOME\Downloads\telegram-shop-bot" -Recurse -Force
+cd "$HOME\Downloads\telegram-shop-bot"
+git add -A
+git commit -m "Email and password login for the admin panel"
+git push
                 stock="∞" if p["infinite"] else avail,
                 desc=f"\n<blockquote expandable>{_esc(desc)}</blockquote>\n"
                      if desc else "")
