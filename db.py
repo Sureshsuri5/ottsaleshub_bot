@@ -88,6 +88,14 @@ CREATE TABLE IF NOT EXISTS seen_tx (
     seen_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS bank_sms (
+    utr        TEXT PRIMARY KEY,
+    amount     REAL NOT NULL,
+    raw        TEXT NOT NULL DEFAULT '',
+    order_id   INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS tiers (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     name     TEXT    NOT NULL UNIQUE,
@@ -1252,6 +1260,35 @@ async def alert_counts() -> dict:
         "  WHERE status = 'pending') s, "
         "(SELECT COUNT(*) FROM orders WHERE status = 'awaiting_review') v")
     return {"withdrawals": r["c"], "withdraw_total": r["s"], "reviews": r["v"]}
+
+
+async def record_sms(utr: str, amount: float, raw: str) -> bool:
+    """Store one bank credit. False if this UTR was already recorded.
+
+    The UTR is the primary key, so a forwarder that resends the same message —
+    which they do, on retry or after a restart — cannot credit an order twice.
+    """
+    try:
+        await ex("INSERT INTO bank_sms (utr, amount, raw) VALUES (?, ?, ?)",
+                 (utr, round(float(amount), 2), raw[:500]))
+        return True
+    except Exception:
+        return False
+
+
+async def sms_for(utr: str):
+    return await q1("SELECT * FROM bank_sms WHERE utr = ?", (utr,))
+
+
+async def claim_sms(utr: str, oid: int) -> None:
+    await ex("UPDATE bank_sms SET order_id = ? WHERE utr = ? AND order_id IS NULL",
+             (oid, utr))
+
+
+async def unclaimed_sms(amount: float, tol: float = 0.01):
+    """Bank credits matching this amount that no order has taken yet."""
+    return await q("SELECT * FROM bank_sms WHERE order_id IS NULL "
+                   "AND ABS(amount - ?) <= ? ORDER BY created_at", (round(amount, 2), tol))
 
 
 async def api_usage(tg_id: int) -> dict:

@@ -406,6 +406,13 @@ class EvmTokenProvider:
         # shows the buyer an address different from the one they already sent
         # to.
         addr = (order["pay_address"] or "").strip()
+        if not addr and cfg.evm_shared:
+            # One shared wallet, verified by the hash the buyer submits. The
+            # hash names one exact transfer, so identical amounts are no longer
+            # ambiguous — but anyone watching the address can see a payment and
+            # submit that hash first, so UNIQUE_AMOUNTS matters here in a way it
+            # doesn't with per-order addresses.
+            addr = cfg.evm_address
         if not addr and hdwallet.ready():
             try:
                 addr = hdwallet.address(await db.next_deriv_index())
@@ -464,7 +471,8 @@ class EvmTokenProvider:
         return Invoice(
             text="\n".join(body),
             pay_amount=order["pay_amount"] or 0, pay_unit=self.unit, pay_address=addr,
-            qr_payload=f"ethereum:{addr}", manual_ref=variable)
+            qr_payload=f"ethereum:{addr}",
+            manual_ref=variable or cfg.evm_shared)
 
     # ---- public JSON-RPC fallback ------------------------------------------
     @property

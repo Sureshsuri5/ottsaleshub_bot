@@ -697,6 +697,37 @@ async def got_ref(m: Message, state: FSMContext):
     if not await db.mark_seen(payments.tx_key(o["provider"], ref), oid):
         return await m.answer("That transaction has already been used.",
                               reply_markup=k.home_kb())
+    # A forwarded bank SMS may already have confirmed this exact UTR. Checking
+    # it here closes the loop from the other direction: whichever arrives
+    # first — the buyer's reference or the bank's message — settles the order,
+    # and the second one finds it done.
+    if o["provider"] in ("upi", "razorpay"):
+        credit = await db.sms_for(ref)
+        if not credit:
+            # The buyer's reference and the wallet's are different identifiers
+            # for the same payment — PhonePe shows a 12-digit UPI UTR, FamPay's
+            # own alert says FMPIB… — so they can never be compared directly.
+            # The amount is what actually links them. Only when exactly one
+            # unclaimed credit matches: two would be a guess.
+            want = float(o["pay_amount"] or o["amount"] or 0)
+            matches = await db.unclaimed_sms(want)
+            if len(matches) == 1:
+                credit = matches[0]
+                ref = credit["utr"]
+        if credit and not credit["order_id"]:
+            want = float(o["pay_amount"] or o["amount"] or 0)
+            if abs(float(credit["amount"]) - want) <= 0.01:
+                await db.claim_sms(ref, oid)
+                await db.set_order(oid, external_ref=ref)
+                await delivery.settle(m.bot, oid, ref)
+                return
+            await m.answer(
+                f"That payment was {cfg.money(credit['amount'])}, but this order "
+                f"is {cfg.money(want)}. Sent to an admin to check.",
+                reply_markup=k.home_kb())
+            await db.set_order(oid, status="awaiting_review", external_ref=ref)
+            return
+
     prov = payments.get(o["provider"])
     if hasattr(prov, "verify_ref"):
         found = await prov.verify_ref(ref)

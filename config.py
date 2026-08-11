@@ -69,6 +69,9 @@ class Config:
     usdt_rate: float = float(os.getenv("USDT_RATE", "1"))
 
     evm_address: str = os.getenv("EVM_ADDRESS", "")
+    # Off = every order gets its own derived address (safest attribution).
+    # On  = everyone pays EVM_ADDRESS and the buyer submits the tx hash.
+    evm_shared: bool = _bool("EVM_SHARED_ADDRESS", False)
     etherscan_key: str = os.getenv("ETHERSCAN_API_KEY", "")
 
     # read-only API key on the Binance account that receives payments
@@ -133,6 +136,10 @@ class Config:
     # Off by default: buyers prefer the round figure they typed. Turn it on if
     # you expect several people paying the same amount at the same moment.
     unique_amounts: bool = _bool("UNIQUE_AMOUNTS", False)
+    # Shared secret for the phone app that forwards bank SMS. Blank = the
+    # endpoint is closed, which is the right default: an open one would let
+    # anyone claim a payment arrived.
+    sms_token: str = os.getenv("SMS_TOKEN", "")
     # Watch-only account xpub at m/44'/60'/0'/0. When set, every order gets its
     # own freshly derived deposit address instead of sharing one, and payments
     # are matched by address rather than by amount. Public key only — this

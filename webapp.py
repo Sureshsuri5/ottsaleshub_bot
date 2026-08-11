@@ -1010,6 +1010,68 @@ async def api_rate_limit(request: web.Request, handler):
     return await handler(request)
 
 
+async def sms_inbound(request):
+    """Bank credit SMS forwarded from a phone.
+
+    The phone app posts the raw message; this reads the amount and UTR, records
+    it, and settles the matching order. Two orders can ask for the same amount,
+    so a credit is only auto-settled when exactly one open order matches —
+    anything ambiguous waits for the buyer's UTR to disambiguate it.
+    """
+    if not cfg.sms_token:
+        return web.json_response({"error": "sms forwarding is off"}, status=503)
+    token = (request.headers.get("X-SMS-Token", "")
+             or request.query.get("token", ""))
+    if token != cfg.sms_token:
+        return web.json_response({"error": "bad token"}, status=401)
+
+    try:
+        d = await request.json()
+        text = str(d.get("text") or d.get("message") or "")
+    except Exception:
+        text = (await request.text())
+
+    import smsparse
+    parsed = smsparse.parse(text)
+    if not parsed:
+        # Not a credit — the phone forwards everything, and most of it is noise
+        return web.json_response({"ok": True, "ignored": True})
+    amount, utr = parsed
+
+    fresh = await db.record_sms(utr, amount, text)
+    if not fresh:
+        return web.json_response({"ok": True, "duplicate": True, "utr": utr})
+
+    # a buyer may have submitted this UTR before the SMS arrived
+    waiting = await db.q(
+        "SELECT * FROM orders WHERE status = 'awaiting_review' "
+        "AND provider IN ('upi', 'razorpay') AND external_ref = ?", (utr,))
+    if not waiting:
+        candidates = await db.q(
+            "SELECT * FROM orders WHERE status = 'pending' "
+            "AND provider IN ('upi', 'razorpay') "
+            "AND ABS(COALESCE(pay_amount, amount) - ?) <= 0.01", (amount,))
+        if len(candidates) != 1:
+            log.info("sms credit %s for %s: %d matching order(s), holding",
+                     utr, amount, len(candidates))
+            return web.json_response({"ok": True, "held": True,
+                                      "matches": len(candidates)})
+        waiting = candidates
+
+    o = waiting[0]
+    if abs(float(o["pay_amount"] or o["amount"]) - amount) > 0.01:
+        log.warning("sms credit %s is %s but order %s wants %s",
+                    utr, amount, o["id"], o["pay_amount"])
+        return web.json_response({"ok": True, "mismatch": True})
+
+    await db.claim_sms(utr, o["id"])
+    await db.set_order(o["id"], external_ref=utr)
+    import delivery
+    await delivery.settle(request.app["bot"], o["id"], utr)
+    log.info("sms credit %s settled order %s", utr, o["id"])
+    return web.json_response({"ok": True, "settled": o["id"]})
+
+
 async def v1_products(request):
     u, err = await api_auth(request)
     if err:
@@ -1167,7 +1229,11 @@ async def maintenance_gate(request, handler):
     would keep checking out through a storefront the shop believes is shut.
     Admin routes stay open so the switch can be turned back off.
     """
-    if request.path.startswith(("/api/admin", "/health", "/build", "/tg/")) \
+    # /sms/ is a payment confirmation arriving from the outside, like the
+    # Telegram webhook. Closing the shop must not stop money being recorded —
+    # a buyer who already paid still needs their order settled, and a bank has
+    # no way to retry later.
+    if request.path.startswith(("/api/admin", "/health", "/build", "/tg/", "/sms/")) \
             or request.method == "GET" and not request.path.startswith("/api/"):
         return await handler(request)
     admin = cfg.is_admin(request.get("uid") or 0)
@@ -1298,6 +1364,7 @@ def build_app(bot: Bot) -> web.Application:
         import webhook
         webhook.add_routes(app)
 
+    r.add_post("/sms/inbound", sms_inbound)
     r.add_get("/api/v1/products", v1_products)
     r.add_get("/api/v1/balance", v1_balance)
     r.add_post("/api/v1/purchase", v1_purchase)
