@@ -925,6 +925,11 @@ function moreView() {
     const money = (n) => `${w.currency || ''}${Number(n || 0).toFixed(2)}`;
     html(`
       <h1>More</h1>
+      <div class="row between" style="margin-bottom:14px">
+        <span class="sub" style="margin:0">Signed in as
+          <b>${esc(me.name || me.id || 'admin')}</b></span>
+        <button class="mini ghost" id="signout" style="width:auto">Sign out</button>
+      </div>
 
       <h2>Deposit wallet</h2>
       <p class="sub">Per-order addresses, live balances, and what is waiting to
@@ -1000,11 +1005,6 @@ function moreView() {
         <button class="mini" id="saveFeed">Save</button>
         <button class="ghost mini" id="testFeed">Send test post</button>
       </div>
-
-      <h2>Session</h2>
-      <p class="sub">Signed in as <b>${esc(me.name || me.id || 'admin')}</b>.
-        Closing the tab signs you out automatically.</p>
-      <button class="ghost" id="signout" style="margin-bottom:8px">Sign out</button>
 
       <h2>Stickers &amp; premium emoji</h2>
       <p class="sub">Send the bot <b>/ids</b>, then a sticker or a premium emoji, to get the
