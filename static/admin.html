@@ -375,6 +375,7 @@ function productView(pid) {
         <div id="stocklist" class="wallet"><p class="sub">Loading…</p></div>
         <div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap">
           <button class="ghost mini" id="importBtn">📄 Import .txt</button>
+          <button class="ghost mini danger-text" id="clearStock">🗑 Delete all unsold</button>
           <button class="ghost mini" id="export">Export unsold</button>
           <button class="ghost mini" id="purge">Clear sold rows</button>
           <button class="ghost mini" id="unlimited">Unlimited mode</button>
@@ -482,6 +483,16 @@ function productView(pid) {
         r.added ? 'ok' : 'err');
       paintStock();
     });
+    on('#clearStock', 'click', () => confirmDelete(
+      'Delete all unsold stock?',
+      'Every unsold item for this product goes. Sold items and past orders are '
+      + 'untouched. There is no undo — export first if you might need them.',
+      async () => {
+        const r = await api(`/admin/product/${pid}/stock`,
+                            { method: 'POST', body: { clear_unsold: 1 } });
+        toast(`${r.removed} item${r.removed === 1 ? '' : 's'} deleted`);
+        paintStock();
+      }));
     on('#export', 'click', async () => {
       const r = await api(`/admin/product/${pid}/stock`);
       r.items.length ? copy(r.items.join('\n'), `${r.items.length} lines copied`)

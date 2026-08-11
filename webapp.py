@@ -550,6 +550,10 @@ async def adm_stock(request):
             return web.json_response(
                 {"error": "That item is already sold or gone."}, status=400)
         return web.json_response({"ok": True, "stock": await db.stock_count(pid)})
+    if d.get("clear_unsold"):
+        removed = await db.clear_unsold(pid)
+        return web.json_response({"removed": removed,
+                                  "stock": await db.stock_count(pid)})
     if d.get("purge"):
         return web.json_response({"removed": await db.purge_sold(pid)})
     added, skipped = await db.add_stock(pid, str(d.get("lines", "")).splitlines())

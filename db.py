@@ -826,6 +826,16 @@ async def delete_stock(pid: int, sid: int) -> bool:
     return n > 0
 
 
+async def clear_unsold(pid: int) -> int:
+    """Remove every unsold item for a product.
+
+    Sold rows are untouched: they are what buyers were given, and My Orders
+    reads from them. This empties the shelf, it doesn't erase the sales.
+    """
+    return await ex_count("DELETE FROM stock WHERE product_id = ? AND is_sold = 0",
+                          (pid,))
+
+
 async def purge_sold(pid: int) -> int:
     return await ex_count("DELETE FROM stock WHERE product_id = ? AND is_sold = 1", (pid,))
 
