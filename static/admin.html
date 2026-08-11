@@ -550,7 +550,7 @@ function signInForm(note) {
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || 'Sign in failed');
-      session.set(d.session);
+      session.set(d.session, true);      // dies when the tab closes
       location.reload();
     } catch (err) {
       b.disabled = false;
@@ -1001,6 +1001,11 @@ function moreView() {
         <button class="ghost mini" id="testFeed">Send test post</button>
       </div>
 
+      <h2>Session</h2>
+      <p class="sub">Signed in as <b>${esc(me.name || me.id || 'admin')}</b>.
+        Closing the tab signs you out automatically.</p>
+      <button class="ghost" id="signout" style="margin-bottom:8px">Sign out</button>
+
       <h2>Stickers &amp; premium emoji</h2>
       <p class="sub">Send the bot <b>/ids</b>, then a sticker or a premium emoji, to get the
         values below. Custom emoji need the bot owner to have Telegram Premium, or the bot to
@@ -1097,6 +1102,10 @@ function moreView() {
         sec.style.display = hits ? '' : 'none';
         if (q) sec.open = true;
       });
+    });
+    on('#signout', 'click', () => {
+      session.clear();
+      location.replace(location.pathname);      // drop any ?token= too
     });
     on('#walletbtn', 'click', () => { haptic(); walletView(); });
     on('#send', 'click', (e) => {

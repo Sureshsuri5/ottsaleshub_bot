@@ -27,7 +27,7 @@ export async function claimLoginLink() {
       body: JSON.stringify({ t }),
     });
     const d = await r.json();
-    if (d.session) session.set(d.session);
+    if (d.session) session.set(d.session, true);   // panel: this tab only
   } catch (_) { /* the screen's own error handling reports it */ }
 }
 
@@ -55,10 +55,19 @@ export function authQuery() {
   return s ? `_session=${encodeURIComponent(s)}` : `token=${devToken}`;
 }
 
+/* Two lifetimes, on purpose.
+   A buyer signing in to the shop should stay signed in — being asked again
+   every time they reopen the tab is friction on the path to a sale.
+   An admin session is a key to the whole shop, so it lives in sessionStorage
+   and dies with the tab. */
 export const session = {
-  get: () => localStorage.getItem('session') || '',
-  set: (v) => localStorage.setItem('session', v),
-  clear: () => localStorage.removeItem('session'),
+  get: () => sessionStorage.getItem('session') || localStorage.getItem('session') || '',
+  set: (v, tabOnly = false) => (tabOnly ? sessionStorage : localStorage)
+    .setItem('session', v),
+  clear: () => {
+    sessionStorage.removeItem('session');
+    localStorage.removeItem('session');
+  },
 };
 
 export async function api(path, opts = {}) {
