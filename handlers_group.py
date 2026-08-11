@@ -34,6 +34,7 @@ STOP = {
     "the", "and", "for", "you", "your", "with", "any", "one", "get", "buy", "sell",
     "need", "want", "have", "has", "available", "avail", "stock", "price", "cost",
     "how", "much", "who", "can", "hai", "bro", "plz", "please", "dm", "pm",
+    "anyone", "anybody", "someone", "selling", "sell", "sale", "here", "there",
     "pro", "premium", "plus", "max", "ultra", "new", "old", "month", "months",
     "year", "years", "day", "days", "acc", "account", "accounts", "key", "keys",
     "ai", "app", "apps", "id", "ids",
@@ -46,6 +47,15 @@ STOP = {
 # Apple product match equally. Noise at this length is handled by STOP above,
 # which is a list that can be corrected; a length rule can't tell "tv" from
 # "is".
+# Category words. A message matching a product on nothing but one of these is
+# talking about a *kind* of thing, not this product — "IPVanish VPN" shares
+# "vpn" with Nord VPN and means something else entirely.
+GENERIC = {
+    "vpn", "proxy", "proxies", "mail", "mails", "email", "cloud", "storage",
+    "music", "video", "stream", "streaming", "antivirus", "hosting", "vps",
+    "gift", "card", "cards", "sub", "subscription", "subs",
+}
+
 MIN_TOKEN = 2
 
 
@@ -97,6 +107,33 @@ def match_products(text: str, products) -> list:
     # and all three must survive.
     kept = [(o, p) for o, p in hits
             if not any(o < other for other, _ in hits)]
+
+    # "Anyone have IPVanish VPN?" used to match Nord VPN on the word "vpn"
+    # alone. The buyer named a specific product we don't sell, and answering
+    # with a different brand is worse than staying quiet.
+    #
+    # The signal is an unmatched distinctive word: if the message contains a
+    # real word that matches nothing in the catalogue, then a product matching
+    # on only *part* of its name is probably a category collision, not the
+    # thing being asked for. A full-name match ("apple tv") still stands, and
+    # so does a partial match when nothing in the message is unaccounted for
+    # ("gemini" → Jio Gemini AI Pro 18m).
+    all_tokens: set[str] = set()
+    seen_in: dict[str, int] = {}
+    for p in products:
+        toks = product_tokens(p)
+        all_tokens |= toks
+        for t in toks:
+            seen_in[t] = seen_in.get(t, 0) + 1
+    unmatched = {w for w in said if w not in all_tokens}
+    if unmatched:
+        # A word is weak evidence if it names a category, or if several
+        # products share it. Requiring the *whole* product name instead would
+        # be too strict — buyers write "nord vpn", not "Nord VPN 3M".
+        def distinctive(overlap: set) -> bool:
+            return any(t not in GENERIC and seen_in.get(t, 0) == 1
+                       for t in overlap)
+        kept = [(o, p) for o, p in kept if distinctive(o)]
 
     scored = []
     for overlap, p in kept:
