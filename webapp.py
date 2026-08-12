@@ -164,6 +164,22 @@ def read_session(token: str) -> int | None:
     return int(uid)
 
 
+def session_needs_renew(token: str) -> bool:
+    """True once a valid session is past halfway through its life.
+
+    Renewing on every request would mint a token per API call for no gain;
+    renewing at the halfway mark means anyone using the panel stays signed in
+    indefinitely, while a session that is simply abandoned still lapses on
+    schedule. That is the difference between "don't log me out while I'm
+    working" and "this token is good forever".
+    """
+    try:
+        _, exp, _ = token.split(".")
+        return int(exp) - time.time() < SESSION_TTL / 2
+    except (AttributeError, ValueError):
+        return False
+
+
 def verify_login_widget(data: dict) -> dict | None:
     """Telegram Login Widget payload.
 
@@ -199,15 +215,19 @@ async def auth_middleware(request: web.Request, handler: Callable):
 
     user = verify_init_data(request.headers.get("X-Init-Data", "")
                             or request.query.get("_auth", ""))
+    renew_for: int | None = None
 
     if user is None:                                  # browser session cookie
-        uid = read_session(request.headers.get("X-Session", "")
-                           or request.query.get("_session", ""))
+        raw = (request.headers.get("X-Session", "")
+               or request.query.get("_session", ""))
+        uid = read_session(raw)
         if uid:
             row = await db.get_user(uid)
             if row:
                 user = {"id": uid, "username": row["username"],
                         "first_name": row["first_name"]}
+                if session_needs_renew(raw):
+                    renew_for = uid
 
     if user is None and cfg.panel_token:
         # query string as well as header: an <img src> can't send headers, so
@@ -233,7 +253,18 @@ async def auth_middleware(request: web.Request, handler: Callable):
     request["admin"] = cfg.is_admin(user["id"])
     if request.path.startswith("/api/admin/") and not request["admin"]:
         return web.json_response({"error": "forbidden"}, status=403)
-    return await handler(request)
+    resp = await handler(request)
+    if renew_for is not None:
+        # A fresh token rides back on the response and the client swaps it in.
+        # Guarded: a streamed response may already be on the wire, and a failed
+        # renewal must never turn a working request into an error — the old
+        # token is still valid, so the worst case is renewing on the next call.
+        try:
+            if not getattr(resp, "prepared", False):
+                resp.headers["X-Session-Renew"] = issue_session(renew_for)
+        except Exception:                               # pragma: no cover
+            pass
+    return resp
 
 
 # Timestamps are stored UTC. The bot renders them in the shop's timezone via

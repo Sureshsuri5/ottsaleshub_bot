@@ -27,7 +27,7 @@ export async function claimLoginLink() {
       body: JSON.stringify({ t }),
     });
     const d = await r.json();
-    if (d.session) session.set(d.session, true);   // panel: this tab only
+    if (d.session) session.set(d.session);   // persists across tabs/restarts
   } catch (_) { /* the screen's own error handling reports it */ }
 }
 
@@ -55,11 +55,11 @@ export function authQuery() {
   return s ? `_session=${encodeURIComponent(s)}` : `token=${devToken}`;
 }
 
-/* Two lifetimes, on purpose.
-   A buyer signing in to the shop should stay signed in — being asked again
-   every time they reopen the tab is friction on the path to a sale.
-   An admin session is a key to the whole shop, so it lives in sessionStorage
-   and dies with the tab. */
+/* One lifetime now: a session survives closing the tab and restarting the
+   browser, and the server slides its expiry forward while it is in use, so an
+   admin stays signed in. The trade-off is that anyone with the device is
+   signed in too — Sign out under More is the way off a shared machine.
+   Pass tabOnly to keep a session confined to one tab. */
 export const session = {
   get: () => sessionStorage.getItem('session') || localStorage.getItem('session') || '',
   set: (v, tabOnly = false) => (tabOnly ? sessionStorage : localStorage)
@@ -82,6 +82,13 @@ export async function api(path, opts = {}) {
   });
   let data = null;
   try { data = await res.json(); } catch (_) {}
+  // The server slides the expiry forward on a session that's in use and hands
+  // the new token back on this header. Swapping it in here means every call
+  // keeps the session alive, so an admin who uses the panel is never signed
+  // out. Kept in whichever store the current one lives in, so a tab-scoped
+  // session isn't quietly promoted to a persistent one by a renewal.
+  const fresh = res.headers.get('X-Session-Renew');
+  if (fresh) session.set(fresh, Boolean(sessionStorage.getItem('session')));
   if (!res.ok) throw new Error(data?.error || describe(res.status));
   return data;
 }

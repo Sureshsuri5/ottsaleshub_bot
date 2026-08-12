@@ -800,6 +800,7 @@ function fulfilView(closed = false, counts = null) {
           : `${d.open} open${d.unread ? ` · ${d.unread} unread` : ''}`}</span>
         <button class="ghost mini" id="tog" style="width:auto">
           ${closed ? '← Open' : 'Closed'}</button>
+        <button class="ghost mini" id="refreshQueue" style="width:auto">🔄</button>
       </div>
       ${list.length ? list.map((f) => {
         const [label, tone] = STAGE[f.stage] || [f.stage, ''];
@@ -824,6 +825,9 @@ function fulfilView(closed = false, counts = null) {
     view.querySelectorAll('[data-f]').forEach((b) =>
       b.onclick = () => goTab(b.dataset.f, c));
     on('#tog', 'click', () => fulfilView(!closed, c));
+    // refetch counts too, not just the rows: a new order arriving should move
+    // the tab badge as well as the list, otherwise the two disagree
+    on('#refreshQueue', 'click', () => fulfilView(closed, null));
     view.querySelectorAll('[data-o]').forEach((el) =>
       el.onclick = () => threadView(Number(el.dataset.o)));
   });
@@ -833,6 +837,7 @@ function threadView(oid) {
   pushScreen(async () => {
     loading();
     let d = await api(`/admin/fulfil/${oid}`);
+    let draft = '';
 
     const paint = () => {
       const f = d.fulfilment, o = d.order || {};
@@ -850,7 +855,12 @@ function threadView(oid) {
             <b class="num">${f.number ? esc(f.number) : '—'}</b></div>
         </div>
 
-        <div id="thread" class="wallet" style="margin-top:12px">
+        <div class="row between" style="margin-top:14px">
+          <span class="sub" style="margin:0">Conversation</span>
+          <button class="ghost mini" id="refreshThread" style="width:auto">🔄 Refresh</button>
+        </div>
+
+        <div id="thread" class="wallet" style="margin-top:6px">
           ${(d.messages || []).map((m) => `
             <div class="between small" style="margin:6px 0;gap:10px">
               <span class="grow" style="white-space:pre-wrap;${
@@ -875,9 +885,28 @@ function threadView(oid) {
       const t = view.querySelector('#thread');
       if (t) t.scrollTop = t.scrollHeight;
 
+      // Repainting rebuilds the input, so a half-typed reply would vanish on
+      // every refresh. Carry it across — losing a message you were part-way
+      // through writing is the fastest way to stop trusting the button.
+      const box = view.querySelector('#msg');
+      if (box && draft) { box.value = draft; }
+
+      const reload = async (quiet) => {
+        const el = view.querySelector('#msg');
+        draft = el ? el.value : draft;
+        try {
+          d = await api(`/admin/fulfil/${oid}`);
+          paint();
+          if (!quiet) toast('Up to date');
+        } catch (e) { toast(e.message || 'Could not refresh', 'err'); }
+      };
+      on('#refreshThread', 'click', () => reload(false));
+
       const act = async (bodyObj, okMsg) => {
         try {
           d = await api(`/admin/fulfil/${oid}`, { method: 'POST', body: bodyObj });
+          // the message is away — the draft it came from must not come back
+          if (bodyObj.action === 'send') draft = '';
           toast(okMsg); paint();
         } catch (e) { toast(e.message || 'Failed', 'err'); }
       };
