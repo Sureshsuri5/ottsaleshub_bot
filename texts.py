@@ -86,6 +86,10 @@ MESSAGES: dict[str, Msg] = {
     "product_delivery": Msg(
         "<i>Delivery is automatic after payment confirmation.</i>",
         "Delivery promise on a product", "Shop"),
+    "product_manual_delivery": Msg(
+        "<i>Activated by our team after payment — we'll ask for your number "
+        "in chat and confirm once it's live.</i>",
+        "Delivery promise on a manually activated product", "Shop"),
     "product_soldout": Msg(
         "{{m_error}} <b>Sold out</b> — check back shortly.",
         "Sold out notice", "Shop", ()),

@@ -169,7 +169,7 @@ async def start(m: Message, state: FSMContext):
             avail = await db.available(p["id"])
             await m.answer(await product_text(p, m.from_user.id),
                            reply_markup=k.product_kb(
-                               p["id"], avail > 0,
+                               p["id"], avail > 0 or is_manual(p),
                                await db.is_watching(m.from_user.id, p["id"])))
             return
 
@@ -271,7 +271,8 @@ async def shop(c: CallbackQuery):
         await show(c, await texts.t("shop_empty"), k.home_kb())
         return await c.answer()
     counts = {p["id"]: await db.stock_count(p["id"]) for p in prods}
-    live = sum(1 for p in prods if p["infinite"] or counts[p["id"]])
+    live = sum(1 for p in prods
+               if p["infinite"] or is_manual(p) or counts[p["id"]])
     # the clock makes every refresh a distinct edit, so Telegram never rejects
     # it as "message is not modified" and the tap always feels like it did work
     stamp = datetime.now(timezone.utc).astimezone().strftime("%H:%M:%S")
@@ -298,6 +299,19 @@ def _unit_plural(unit: str) -> str:
     if unit.endswith("y") and unit[-2:-1] not in "aeiou":
         return unit[:-1] + "ies"
     return unit + "s"
+
+
+def is_manual(p) -> bool:
+    """Activated by hand, so it has no stock and none should be shown.
+
+    Guarded on the key: a product row read before the column migration ran
+    would otherwise raise, and a shop that won't render is worse than one
+    missing a flag.
+    """
+    try:
+        return bool(p["manual"]) if "manual" in p.keys() else False
+    except Exception:
+        return False
 
 
 async def product_text(p, uid: int) -> str:
@@ -342,13 +356,16 @@ async def product_text(p, uid: int) -> str:
                                     note=await flair.render(note))]
 
     # stock is already on every row of the list, so only mention it when it
-    # changes what the buyer can do right now
-    if not p["infinite"]:
+    # changes what the buyer can do right now. A manual product has no stock at
+    # all — every "sold out" or "only 2 left" line on one is simply false.
+    if not p["infinite"] and not is_manual(p):
         if avail == 0:
             lines += ["", await texts.t("product_soldout")]
         elif avail <= 5:
             lines += ["", await texts.t("product_low", left=avail)]
-    if avail or p["infinite"]:
+    if is_manual(p):
+        lines += ["", await texts.t("product_manual_delivery")]
+    elif avail or p["infinite"]:
         lines += ["", await texts.t("product_delivery")]
     return "\n".join(lines)
 
@@ -360,7 +377,7 @@ async def _render_product(c: CallbackQuery, pid: int, state: FSMContext):
     await state.update_data(pid=pid)
     avail = await db.available(pid)
     await show(c, await product_text(p, c.from_user.id),
-               k.product_kb(pid, avail > 0 or bool(p["infinite"]),
+               k.product_kb(pid, avail > 0 or bool(p["infinite"]) or is_manual(p),
                             await db.is_watching(c.from_user.id, pid)))
     await c.answer()
 
@@ -528,7 +545,8 @@ async def create_order(c: CallbackQuery, state: FSMContext):
         p = await db.product(pid)
         if not p or not p["is_active"]:
             return await c.answer("Product unavailable.", show_alert=True)
-        if not p["infinite"] and await db.stock_count(pid) < qty:
+        if not p["infinite"] and not is_manual(p) \
+                and await db.stock_count(pid) < qty:
             return await c.answer("Not enough stock left.", show_alert=True)
         # recomputed from the buyer's tier at the moment of purchase
         amount = round(await pricing.price_for(p, c.from_user.id) * qty, 2)
@@ -795,7 +813,7 @@ async def toggle_watch(c: CallbackQuery, state: FSMContext):
                        show_alert=True)
     avail = await db.available(pid)
     await show(c, await product_text(p, c.from_user.id),
-               k.product_kb(pid, avail > 0 or bool(p["infinite"]),
+               k.product_kb(pid, avail > 0 or bool(p["infinite"]) or is_manual(p),
                             await db.is_watching(c.from_user.id, pid)))
 
 
@@ -860,7 +878,8 @@ async def pre_checkout(pcq: PreCheckoutQuery):
         return await pcq.answer(ok=False, error_message="This order is no longer open.")
     if o["kind"] == "purchase" and o["product_id"]:
         p = await db.product(o["product_id"])
-        if not p or (not p["infinite"] and await db.stock_count(p["id"]) < o["qty"]):
+        if not p or (not p["infinite"] and not is_manual(p)
+                     and await db.stock_count(p["id"]) < o["qty"]):
             return await pcq.answer(ok=False, error_message="Just went out of stock, sorry.")
     await pcq.answer(ok=True)
 

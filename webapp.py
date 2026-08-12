@@ -1271,6 +1271,7 @@ async def v1_products(request):
                     "list_price": p["price"],
                     "unit": p["unit"], "currency": cfg.fiat,
                     "stock": None if p["infinite"] else await db.stock_count(p["id"]),
+                    "manual": bool(p["manual"]) if "manual" in p.keys() else False,
                     "unlimited": bool(p["infinite"])})
     return web.json_response({"products": out})
 

@@ -144,7 +144,7 @@ async function shopView() {
     loading();
     catalog = await api('/catalog');
     const items = catalog.flatMap((c) => c.products);
-    const ready = items.filter((p) => p.infinite || p.stock).length;
+    const ready = items.filter((p) => p.infinite || p.manual || p.stock).length;
     const onSale = items.filter((p) => p.list_price > p.price).length;
     const h = me.hero || {};
     const st = me.stats || {};
@@ -221,23 +221,29 @@ async function shopView() {
 }
 
 const productCard = (p) => {
-  const live = p.infinite || p.stock > 0;
+  // A manual product is activated by a person and holds no stock. Every stock
+  // signal on one — the count, the gauge, the red "Out of stock" pill — states
+  // something false, so none of them are rendered.
+  const live = p.infinite || p.manual || p.stock > 0;
   return `
     <div class="card ${live ? 'live' : 'gone'}" data-p="${p.id}" role="button" tabindex="0">
       <div class="between">
         <div class="grow">
           <div class="trunc"><b>${esc(p.emoji || '')} ${esc(p.name)}</b>
-            <span class="num muted small">(${p.infinite ? '∞' : p.stock})</span></div>
-          <div class="small muted trunc">${p.available || p.infinite
-            ? 'In stock — instant delivery' : 'Sold out'}</div>
+            ${p.manual ? '' : `<span class="num muted small">(${
+              p.infinite ? '∞' : p.stock})</span>`}</div>
+          <div class="small muted trunc">${p.manual ? 'Activated by our team'
+            : p.available || p.infinite ? 'In stock — instant delivery' : 'Sold out'}</div>
         </div>
         <div class="num" style="font-weight:700">${money(p.price)}</div>
       </div>
-      ${gauge(p.stock, p.infinite)}
+      ${p.manual ? '' : gauge(p.stock, p.infinite)}
       <div class="between small" style="margin-top:6px">
-        <span class="muted">${p.infinite ? 'Always in stock'
+        <span class="muted">${p.manual ? 'Ready to order'
+          : p.infinite ? 'Always in stock'
           : p.stock ? `${p.stock} available` : 'Sold out'}</span>
-        <span class="pill ${live ? 'live' : 'bad'}">${live ? 'In stock' : 'Out of stock'}</span>
+        <span class="pill ${live ? 'live' : 'bad'}">${
+          p.manual ? 'Available' : live ? 'In stock' : 'Out of stock'}</span>
       </div>
     </div>`;
 };
@@ -319,7 +325,7 @@ function requireSignIn() {
 function productView(pid) {
   const p = catalog.flatMap((c) => c.products).find((x) => x.id === pid);
   let qty = 1;
-  const max = p.infinite ? 99 : p.stock;
+  const max = p.infinite || p.manual ? 99 : p.stock;
 
   pushScreen(() => {
     html(`
@@ -328,12 +334,16 @@ function productView(pid) {
         p.unit ? ' / ' + esc(p.unit) : ''}</p>
       ${p.description ? `<div class="card small pre">${esc(p.description)}</div>` : ''}
       ${p.note ? `<div class="card small pre note">${esc(p.note)}</div>` : ''}
+      ${p.manual ? '' : `
       <div class="card">
         <div class="between"><span class="muted small">Stock</span>
           <span class="num">${p.infinite ? '∞' : p.stock}</span></div>
         ${gauge(p.stock, p.infinite)}
-      </div>
-      <p class="sub"><i>Delivery is automatic after payment confirmation.</i></p>
+      </div>`}
+      <p class="sub"><i>${p.manual
+        ? 'Activated by our team after payment — we\u2019ll ask for your number '
+          + 'in chat and confirm once it\u2019s live.'
+        : 'Delivery is automatic after payment confirmation.'}</i></p>
       ${max ? `
       <div class="card">
         <div class="between">

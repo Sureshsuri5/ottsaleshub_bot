@@ -201,13 +201,18 @@ def shop_kb(prods, counts: dict[int, int], page: int = 0,
     rows = []
     for p in window:
         left = counts.get(p["id"], 0)
-        in_stock = bool(p["infinite"]) or left > 0
+        # A manual product is activated by hand: it has no stock, so it is
+        # always buyable and there is no number to print. Showing "(0)" in red
+        # on one told the buyer it was sold out when it was on sale.
+        manual = bool(p["manual"]) if "manual" in p.keys() else False
+        in_stock = manual or bool(p["infinite"]) or left > 0
         count = "∞" if p["infinite"] else left
         emoji = (p["emoji"] or "").strip()
         # a custom emoji renders as its own icon slot, so don't also inline it —
         # but if icons are off, the plain emoji has to come back into the label
         icon_id = flair.icon_id(p["icon_emoji_id"])
-        label = f"{emoji + ' ' if emoji and not icon_id else ''}{p['name']} ({count})"
+        label = (f"{emoji + ' ' if emoji and not icon_id else ''}{p['name']}"
+                 + ("" if manual else f" ({count})"))
         _ = prices  # prices are shown on the product screen, not in the list
         rows.append([InlineKeyboardButton(
             text=label, callback_data=f"prod:{p['id']}",
