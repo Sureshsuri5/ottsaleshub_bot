@@ -367,6 +367,14 @@ function productView(pid) {
         <button id="saveStatic" style="margin-top:8px">Save content</button>
         <button class="ghost" id="unlimited" style="margin-top:8px">Switch to per-unit stock</button>
       ` : `
+        <div class="row" style="margin:0 0 14px;gap:8px;flex-wrap:wrap">
+          <button class="ghost mini" id="importBtn">📄 Import .txt</button>
+          <button class="ghost mini danger-text" id="clearStock">🗑 Delete all unsold</button>
+          <button class="ghost mini" id="export">Export unsold</button>
+          <button class="ghost mini" id="purge">Clear sold rows</button>
+          <button class="ghost mini" id="unlimited">Unlimited mode</button>
+        </div>
+
         <label class="row" style="justify-content:space-between">
           <span>Add items — one per line, each goes to one buyer</span>
           <span class="tiny muted" id="linecount"></span>
@@ -377,14 +385,7 @@ function productView(pid) {
                style="display:none">
 
         <label style="margin-top:14px">Unsold items</label>
-        <div id="stocklist" class="wallet"><p class="sub">Loading…</p></div>
-        <div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap">
-          <button class="ghost mini" id="importBtn">📄 Import .txt</button>
-          <button class="ghost mini danger-text" id="clearStock">🗑 Delete all unsold</button>
-          <button class="ghost mini" id="export">Export unsold</button>
-          <button class="ghost mini" id="purge">Clear sold rows</button>
-          <button class="ghost mini" id="unlimited">Unlimited mode</button>
-        </div>`}
+        <div id="stocklist" class="wallet"><p class="sub">Loading…</p></div>`}
 
       <button class="danger" id="del" style="margin-top:22px">Delete product</button>`);
 
