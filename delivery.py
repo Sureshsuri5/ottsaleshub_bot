@@ -527,6 +527,11 @@ async def announce_restocks(bot: Bot) -> None:
 
     for p in await db.products(None, only_active=True):
         pid = p["id"]
+        # Manual products hold no stock, and available() reports them as always
+        # buyable so they can be sold at all. Left in, that reads as a jump from
+        # 0 to a million and the group gets "1000000 new stock added".
+        if "manual" in p.keys() and p["manual"]:
+            continue
         avail = await db.available(pid)
         in_stock = avail > 0 or p["infinite"]
         now = "1" if in_stock else "0"

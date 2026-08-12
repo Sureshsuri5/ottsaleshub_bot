@@ -397,7 +397,8 @@ async def announce_test(m: Message, state: FSMContext):
     prods = await db.products(None, only_active=True)
     lines.append(f"\n<b>{len(prods)} active product(s)</b>")
     for p in prods[:15]:
-        avail = await db.available(p["id"])
+        manual = bool(p["manual"]) if "manual" in p.keys() else False
+        avail = "manual" if manual else await db.available(p["id"])
         seen = await db.setting(f"restock:instock:{p['id']}", "—")
         isnew = await db.setting(f"restock:new:{p['id']}", "") == "1"
         state_txt = ("announced" if isnew else "would announce as NEW")

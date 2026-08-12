@@ -848,10 +848,20 @@ async def stock_count(pid: int) -> int:
 
 
 async def available(pid: int) -> int:
-    """Units purchasable right now. Infinite products report a large number."""
+    """Units purchasable right now. Infinite products report a large number.
+
+    Manual products report the same: they hold no stock rows because a person
+    activates them, so counting the table would say 0 and every gate above this
+    would refuse the sale. Reporting them as available is what makes them
+    buyable — the callers that mean "how many are on the shelf" rather than
+    "can this be bought" have to exclude them explicitly, and the two that do
+    are the group restock announcer and the restock watchlist.
+    """
     p = await product(pid)
     if not p:
         return 0
+    if "manual" in p.keys() and p["manual"]:
+        return 10**6
     return 10**6 if p["infinite"] else await stock_count(pid)
 
 
