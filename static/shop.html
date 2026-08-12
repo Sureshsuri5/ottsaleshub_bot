@@ -344,7 +344,16 @@ function productView(pid) {
         ? 'Activated by our team after payment — we\u2019ll ask for your number '
           + 'in chat and confirm once it\u2019s live.'
         : 'Delivery is automatic after payment confirmation.'}</i></p>
-      ${max ? `
+      ${!max ? `<div class="empty"><b>Sold out</b>Check back shortly — restocks are frequent.</div>`
+      : p.manual ? `
+      <div class="card">
+        <div class="between">
+          <span class="muted small">Total</span>
+          <span class="num" style="font-size:19px"><b>${money(p.price)}</b></span>
+        </div>
+      </div>
+      <button id="buy">Choose payment</button>`
+      : `
       <div class="card">
         <div class="between">
           <span class="muted small">Quantity</span>
@@ -359,16 +368,20 @@ function productView(pid) {
           <span class="num" id="total" style="font-size:19px"><b>${money(p.price)}</b></span>
         </div>
       </div>
-      <button id="buy">Choose payment</button>`
-      : `<div class="empty"><b>Sold out</b>Check back shortly — restocks are frequent.</div>`}
+      <button id="buy">Choose payment</button>`}
     `);
     if (!max) return;
-    const sync = () => {
-      view.querySelector('#qty').textContent = qty;
-      view.querySelector('#total').innerHTML = `<b>${money(p.price * qty)}</b>`;
-    };
-    view.querySelector('#minus').onclick = () => { qty = Math.max(1, qty - 1); haptic(); sync(); };
-    view.querySelector('#plus').onclick = () => { qty = Math.min(max, qty + 1); haptic(); sync(); };
+    // The stepper only exists on products with a quantity to choose. Manual
+    // ones render just the total and the buy button, so bind those and stop —
+    // reaching for #qty here would throw and leave the button dead.
+    if (!p.manual) {
+      const sync = () => {
+        view.querySelector('#qty').textContent = qty;
+        view.querySelector('#total').innerHTML = `<b>${money(p.price * qty)}</b>`;
+      };
+      view.querySelector('#minus').onclick = () => { qty = Math.max(1, qty - 1); haptic(); sync(); };
+      view.querySelector('#plus').onclick = () => { qty = Math.min(max, qty + 1); haptic(); sync(); };
+    }
     view.querySelector('#buy').onclick = () => payView({ kind: 'purchase', product_id: p.id, qty,
                                                           amount: p.price * qty, name: p.name });
   });

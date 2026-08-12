@@ -392,6 +392,12 @@ async def choose_qty(c: CallbackQuery, state: FSMContext):
     if avail < 1:
         return await c.answer("Sold out.", show_alert=True)
 
+    # A manual product is one activation against one number, so there is nothing
+    # to choose: asking "how many?" on it only adds a tap before the same answer.
+    if is_manual(p):
+        await c.answer()
+        return await _to_payment(c, state, pid, 1)
+
     unit = (p["unit"] or "").strip()
     unit_price = await pricing.price_for(p, c.from_user.id)
     price_line = cfg.money(unit_price) + (f" / {esc(unit)}" if unit else "")
@@ -479,6 +485,10 @@ async def _to_payment(c: CallbackQuery, state: FSMContext, pid: int, qty: int) -
     p = await db.product(pid)
     avail = await db.available(pid)
     qty = max(1, min(qty, max(1, avail)))
+    # one activation, one number — clamped here as well as at the buy button so
+    # no other route into checkout can raise it
+    if p and is_manual(p):
+        qty = 1
     await state.update_data(**{f"q{pid}": qty})
     u = await db.get_user(c.from_user.id)
     bal = u["balance"] if u else 0.0
