@@ -327,6 +327,15 @@ async def _credit_overpayment(bot: Bot, o, notify: bool = True) -> float:
     return extra
 
 
+_MIN_STOCK_ADD = 1
+"""Smallest top-up worth announcing.
+
+A single unit trickling back in is noise, and the group mutes a shop that
+posts noise. Raise this if you add stock in small batches — at 25, only a
+real restock reaches the group.
+"""
+
+
 async def announce_restocks(bot: Bot) -> None:
     """Post to the group when a product is new, or comes back from sold out.
 
@@ -364,6 +373,17 @@ async def announce_restocks(bot: Bot) -> None:
         if price != old_price:
             await db.set_setting(f"restock:price:{pid}", f"{price:.2f}")
 
+        # Numeric availability, tracked the same way as price. The boolean
+        # above only catches 0 -> N; a top-up on a product that never sold out
+        # is invisible to it, which is exactly the case we want to announce.
+        try:
+            last_avail = int(await db.setting(f"restock:avail:{pid}", "") or 0)
+        except ValueError:
+            last_avail = 0
+        added = max(avail - last_avail, 0)
+        if avail != last_avail:
+            await db.set_setting(f"restock:avail:{pid}", str(avail))
+
         if first_run:
             # everything that already exists counts as known, new or not
             await db.set_setting(f"restock:new:{pid}", "1")
@@ -377,6 +397,8 @@ async def announce_restocks(bot: Bot) -> None:
             kind = "newproduct_group"
         elif was == "0":
             kind = "restock_group"
+        elif not p["infinite"] and added >= _MIN_STOCK_ADD:
+            kind = "stockadded_group"
         elif old_price and price < old_price - 0.009:
             # cheaper than last time. A rise is recorded silently — nobody
             # wants an announcement that their shop got more expensive.
@@ -399,6 +421,7 @@ async def announce_restocks(bot: Bot) -> None:
                 was=cfg.money(old_price),
                 percent=f"{off}%",
                 stock="∞" if p["infinite"] else avail,
+                added=added,
                 desc=f"\n<blockquote expandable>{_esc(desc)}</blockquote>\n"
                      if desc else "")
             sent = await bot.send_message(

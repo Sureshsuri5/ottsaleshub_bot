@@ -122,6 +122,13 @@ MESSAGES: dict[str, Msg] = {
         "<i>First come, first served.</i>",
         "Restock announcement (group)", "Groups",
         ("product", "price", "stock", "desc")),
+    "stockadded_group": Msg(
+        "{{m_box}} <b>{added} new stock added</b> for {product}!\n\n"
+        "{{g_stock}} Available: <b>{stock} items</b>\n"
+        "{{g_price}} Price: <b>{price}</b>\n\n"
+        "<i>First come, first served.</i>",
+        "Stock added announcement (group)", "Groups",
+        ("product", "price", "stock", "added", "desc")),
     "restock_alert": Msg(
         "{{m_ok}} <b>Back in stock</b>\n\n"
         "{emoji} <b>{product}</b> is available again at <b>{price}</b>.\n\n"
