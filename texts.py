@@ -129,6 +129,50 @@ MESSAGES: dict[str, Msg] = {
         "<i>First come, first served.</i>",
         "Stock added announcement (group)", "Groups",
         ("product", "price", "stock", "added", "desc")),
+    # ------------------------------------------------- manual fulfilment
+    "fulfil_ask_number": Msg(
+        "{{m_card}} <b>Order #{oid} — activation needed</b>\n\n"
+        "{product} × {qty} is activated by our team on your account.\n\n"
+        "<b>Reply with the number to activate.</b>\n"
+        "Include the country code, e.g. <code>+91 9876543210</code>.\n\n"
+        "<i>Just type it in this chat — we reply here too.</i>",
+        "Manual order: ask for the number", "Fulfilment",
+        ("oid", "product", "qty")),
+    "fulfil_got_number": Msg(
+        "{{m_ok}} <b>Got it — order #{oid}</b>\n\n"
+        "We're activating it now. Stay in this chat: if the provider sends you "
+        "a code, we'll ask for it here.",
+        "Manual order: number received", "Fulfilment", ("oid",)),
+    "fulfil_ask_otp": Msg(
+        "{{m_card}} <b>Order #{oid} — code needed</b>\n\n"
+        "A one-time code has been sent to your number. "
+        "<b>Reply with that code.</b>\n\n"
+        "<i>We never ask for your password — only the code you just received.</i>",
+        "Manual order: ask for the OTP", "Fulfilment", ("oid",)),
+    "fulfil_got_otp": Msg(
+        "{{m_ok}} <b>Code received — order #{oid}</b>\n\n"
+        "Finishing the activation. One moment.",
+        "Manual order: OTP received", "Fulfilment", ("oid",)),
+    "fulfil_admin_msg": Msg(
+        "{{m_receipt}} <b>Support — order #{oid}</b>\n\n"
+        "{body}\n\n"
+        "<i>Reply in this chat and it reaches us.</i>",
+        "Manual order: message from support", "Fulfilment", ("oid", "body")),
+    "fulfil_done": Msg(
+        "{{m_ok}} <b>Order #{oid} complete</b>\n\n"
+        "{product} is activated and ready to use.{note}\n\n"
+        "<i>Thanks for your patience — enjoy!</i>",
+        "Manual order: completed", "Fulfilment", ("oid", "product", "note")),
+    "fulfil_nudge_number": Msg(
+        "{{m_box}} <b>Still waiting — order #{oid}</b>\n\n"
+        "We need the number to activate before we can continue. "
+        "Reply here whenever you're ready.",
+        "Manual order: reminder for the number", "Fulfilment", ("oid",)),
+    "fulfil_nudge_otp": Msg(
+        "{{m_box}} <b>Still waiting — order #{oid}</b>\n\n"
+        "We still need the one-time code. If it never arrived, tell us here "
+        "and we'll send it again.",
+        "Manual order: reminder for the OTP", "Fulfilment", ("oid",)),
     "restock_alert": Msg(
         "{{m_ok}} <b>Back in stock</b>\n\n"
         "{emoji} <b>{product}</b> is available again at <b>{price}</b>.\n\n"

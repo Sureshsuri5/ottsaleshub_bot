@@ -68,6 +68,12 @@ async def _tick(bot: Bot) -> None:
     except Exception:
         log.exception("could not send restock alerts")
 
+    # buyers sitting on an unanswered activation prompt
+    try:
+        await delivery.nudge_fulfilments(bot)
+    except Exception:
+        log.exception("could not nudge open fulfilments")
+
     try:
         await delivery.notify_underpaid(bot)
     except Exception:

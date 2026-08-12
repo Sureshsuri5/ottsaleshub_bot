@@ -595,7 +595,7 @@ async def adm_product_create(request):
 
 
 ALLOWED_FIELDS = {"name", "description", "price", "is_active", "infinite", "static_payload",
-                  "category_id", "emoji", "icon_emoji_id", "unit", "note", "cost"}
+                  "category_id", "emoji", "icon_emoji_id", "unit", "note", "cost", "manual"}
 
 
 async def adm_product_update(request):
@@ -606,7 +606,7 @@ async def adm_product_update(request):
     d = {k: v for k, v in (await body(request)).items() if k in ALLOWED_FIELDS}
     if "price" in d:
         d["price"] = round(float(d["price"]), 2)
-    for flag in ("is_active", "infinite"):
+    for flag in ("is_active", "infinite", "manual"):
         if flag in d:
             d[flag] = int(bool(d[flag]))
     await db.update_product(pid, **d)
@@ -887,6 +887,67 @@ async def adm_users(request):
     return web.json_response([
         {**dict(u), **summaries.get(u["tg_id"], {"orders": 0, "spent": 0})}
         for u in users])
+
+
+async def adm_fulfil(request):
+    """The work list. `closed=1` for the finished ones."""
+    closed = request.query.get("closed") == "1"
+    rows = await db.fulfil_queue(closed=closed)
+    return web.json_response({"items": [dict(r) for r in rows],
+                              **await db.fulfil_counts()})
+
+
+async def adm_fulfil_thread(request):
+    oid = int(request.match_info["oid"])
+    f = await db.fulfilment(oid)
+    if not f:
+        return web.json_response({"error": "No such order."}, status=404)
+    o = await db.order(oid)
+    u = await db.get_user(f["user_id"])
+    # opening the thread is what marks it read — the badge exists to say
+    # "somebody has not looked at this yet", and now somebody has
+    await db.fulfil_seen(oid)
+    return web.json_response({
+        "order": dict(o) if o else None,
+        "fulfilment": dict(f),
+        "user": dict(u) if u else None,
+        "messages": [dict(m) for m in await db.fulfil_thread(oid)]})
+
+
+async def adm_fulfil_action(request):
+    oid = int(request.match_info["oid"])
+    d = await body(request)
+    bot = request.app["bot"]
+    f = await db.fulfilment(oid)
+    if not f:
+        return web.json_response({"error": "No such order."}, status=404)
+    act = str(d.get("action", "")).strip()
+
+    if act == "send":
+        text = str(d.get("text", "")).strip()
+        if not text:
+            return web.json_response({"error": "Write a message first."}, status=400)
+        if not await delivery.fulfil_to_user(bot, oid, text):
+            return web.json_response({"error": "Could not deliver."}, status=502)
+    elif act == "ask_otp":
+        await delivery.fulfil_request_otp(bot, oid)
+    elif act == "note":
+        await db.set_fulfil(oid, note=str(d.get("note", ""))[:500])
+    elif act == "complete":
+        if not await delivery.fulfil_complete(bot, oid):
+            return web.json_response({"error": "Already closed."}, status=409)
+    elif act == "cancel":
+        if not await delivery.fulfil_cancel(bot, oid, str(d.get("reason", "")).strip()):
+            return web.json_response({"error": "Already closed."}, status=409)
+    else:
+        return web.json_response({"error": "Unknown action."}, status=400)
+
+    f = await db.fulfilment(oid)
+    o = await db.order(oid)
+    return web.json_response({
+        "fulfilment": dict(f) if f else None,
+        "order": dict(o) if o else None,
+        "messages": [dict(m) for m in await db.fulfil_thread(oid)]})
 
 
 async def adm_referrers(request):
@@ -1479,6 +1540,9 @@ def build_app(bot: Bot) -> web.Application:
     r.add_post("/api/admin/wallet/hide", adm_wallet_hide)
     r.add_get("/api/admin/users", adm_users)
     r.add_get("/api/admin/referrers", adm_referrers)
+    r.add_get("/api/admin/fulfil", adm_fulfil)
+    r.add_get("/api/admin/fulfil/{oid}", adm_fulfil_thread)
+    r.add_post("/api/admin/fulfil/{oid}", adm_fulfil_action)
     r.add_post("/api/admin/user/{uid}", adm_user_action)
     r.add_post("/api/admin/broadcast", adm_broadcast)
     r.add_get("/api/admin/settings", adm_settings)

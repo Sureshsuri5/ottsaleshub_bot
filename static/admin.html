@@ -360,8 +360,18 @@ function productView(pid) {
       <button class="ghost" id="vis" style="margin-top:8px">
         ${p.is_active ? 'Hide from shop' : 'Show in shop'}</button>
 
+      <label class="tog" style="margin-top:14px">
+        <span><b>Manual activation</b>
+          <div class="hint">Buyer is asked for a number and OTP; you finish the
+            order from Fulfilment. No stock is used.</div></span>
+        <input type="checkbox" id="manual" ${p.manual ? 'checked' : ''}>
+      </label>
+
       <h2>Stock</h2>
-      ${p.infinite ? `
+      ${p.manual ? `
+        <p class="sub">This product is activated by hand, so it has no stock.
+          Paid orders appear under <b>Orders → Fulfilment</b>.</p>
+      ` : p.infinite ? `
         <label>Everyone receives this</label>
         <textarea id="static">${esc(p.static_payload)}</textarea>
         <button id="saveStatic" style="margin-top:8px">Save content</button>
@@ -388,6 +398,13 @@ function productView(pid) {
         <div id="stocklist" class="wallet"><p class="sub">Loading…</p></div>`}
 
       <button class="danger" id="del" style="margin-top:22px">Delete product</button>`);
+
+    on('#manual', 'change', async (e) => {
+      await api(`/admin/product/${pid}`, { method: 'PATCH',
+                                           body: { manual: e.target.checked ? 1 : 0 } });
+      toast(e.target.checked ? 'Manual activation on' : 'Back to stock delivery');
+      refresh();
+    });
 
     on('#save', 'click', async () => {
       await api(`/admin/product/${pid}`, { method: 'PATCH', body: {
@@ -580,6 +597,28 @@ function confirmDelete(title, detail, run) {
 }
 
 /* ----------------------------------------------------------------- orders */
+
+// One tab row shared by the order lists and the manual queue, so Manual reads
+// as a tab of Orders rather than a separate screen you navigate away into.
+// `unread` shows as a dot rather than a number: the count is on the rows
+// themselves, and what the tab needs to say is only "something is waiting".
+function orderTabs(active, counts = {}) {
+  const tabs = [['open', 'Open'], ['delivered', 'Delivered'],
+                ['manual', 'Manual'], ['all', 'All']];
+  return `<div class="row" style="gap:8px;margin:12px 0;flex-wrap:wrap">
+    ${tabs.map(([t, label]) => {
+      const n = t === 'manual' ? counts.fulfilling : counts[t];
+      const dot = t === 'manual' && counts.fulfil_unread ? ' •' : '';
+      return `<button class="mini ${t === active ? '' : 'ghost'}" data-f="${t}">
+        ${label}${n ? ` (${n})` : ''}${dot}</button>`;
+    }).join('')}
+  </div>`;
+}
+
+function goTab(t, counts) {
+  return t === 'manual' ? fulfilView(false, counts) : ordersView(t);
+}
+
 function ordersView(filter = 'open', term = '') {
   replaceScreen(async () => {
     loading();
@@ -588,22 +627,18 @@ function ordersView(filter = 'open', term = '') {
     const list = res.orders || res;
     const counts = res.counts || {};
     paintOrderBadge(counts.open);
-    const tabs = ['open', 'delivered', 'all'];
     html(`
       <h1>Orders</h1>
       <input class="search" id="oq" placeholder="Order id, buyer id, product or ref"
              value="${esc(term)}">
       ${term ? `<p class="sub">${list.length} result${list.length === 1 ? '' : 's'}
-        for “${esc(term)}” — <a href="#" id="oclear">clear</a></p>` : `
-      <div class="row" style="gap:8px;margin:12px 0">
-        ${tabs.map((t) => `<button class="mini ${t === filter ? '' : 'ghost'}" data-f="${t}">
-          ${t[0].toUpperCase() + t.slice(1)}${counts[t] ? ` (${counts[t]})` : ''}</button>`).join('')}
-      </div>`}
+        for “${esc(term)}” — <a href="#" id="oclear">clear</a></p>`
+        : orderTabs(filter, counts)}
       ${list.length ? list.map(orderCard).join('')
         : `<div class="empty"><b>Nothing here</b>Orders appear the moment a buyer starts
            checkout.</div>`}`);
 
-    view.querySelectorAll('[data-f]').forEach((b) => b.onclick = () => ordersView(b.dataset.f));
+    view.querySelectorAll('[data-f]').forEach((b) => b.onclick = () => goTab(b.dataset.f, counts));
     const q = view.querySelector('#oq');
     // search on Enter rather than per keystroke: each search is a round trip,
     // and an order id is pasted whole rather than typed a character at a time
@@ -735,6 +770,138 @@ function usersView(q = '') {
     on('#refsBtn', 'click', () => referrersView());
     view.querySelectorAll('[data-u]').forEach((el) =>
       el.onclick = () => userView(Number(el.dataset.u)));
+  });
+}
+
+const STAGE = {
+  awaiting_number: ['Needs number', 'wait'],
+  awaiting_otp:    ['Needs OTP',    'wait'],
+  working:         ['Your turn',    'ok'],
+  done:            ['Complete',     'ok'],
+  cancelled:       ['Refunded',     'bad'],
+};
+
+function fulfilView(closed = false, counts = null) {
+  replaceScreen(async () => {
+    loading();
+    // the tab row needs the order counts too, so fetch both when arriving here
+    // directly (a refresh, or the back button) rather than via an Orders tab
+    const [d, res] = await Promise.all([
+      api(`/admin/fulfil${closed ? '?closed=1' : ''}`),
+      counts ? Promise.resolve(null) : api('/admin/orders?status=open'),
+    ]);
+    const c = counts || (res && res.counts) || {};
+    const list = d.items || [];
+    html(`
+      <h1>Orders</h1>
+      ${orderTabs('manual', { ...c, fulfilling: d.open, fulfil_unread: d.unread })}
+      <div class="row between" style="margin-bottom:10px">
+        <span class="sub" style="margin:0">${closed ? 'Closed orders.'
+          : `${d.open} open${d.unread ? ` · ${d.unread} unread` : ''}`}</span>
+        <button class="ghost mini" id="tog" style="width:auto">
+          ${closed ? '← Open' : 'Closed'}</button>
+      </div>
+      ${list.length ? list.map((f) => {
+        const [label, tone] = STAGE[f.stage] || [f.stage, ''];
+        return `
+        <div class="card" data-o="${f.order_id}" role="button" tabindex="0">
+          <div class="between">
+            <div class="grow trunc"><b>#${esc(f.code || f.order_id)}</b>
+              <span class="muted small">${esc(f.product_name || '')}</span></div>
+            <span class="pill ${tone}">${label}</span>
+          </div>
+          <div class="between small muted" style="margin-top:6px">
+            <span class="trunc">${esc(f.first_name || 'Unnamed')}
+              ${f.username ? '@' + esc(f.username) : ''}
+              ${f.number ? ' · <span class="num">' + esc(f.number) + '</span>' : ''}</span>
+            <span>${f.unread ? '<span class="pill bad">' + f.unread + ' new</span>' : ''}</span>
+          </div>
+        </div>`; }).join('')
+        : `<div class="empty"><b>Nothing here</b>${closed
+             ? 'No closed manual orders yet.'
+             : 'No manual orders waiting. They appear here the moment one is paid for.'}</div>`}`);
+
+    view.querySelectorAll('[data-f]').forEach((b) =>
+      b.onclick = () => goTab(b.dataset.f, c));
+    on('#tog', 'click', () => fulfilView(!closed, c));
+    view.querySelectorAll('[data-o]').forEach((el) =>
+      el.onclick = () => threadView(Number(el.dataset.o)));
+  });
+}
+
+function threadView(oid) {
+  pushScreen(async () => {
+    loading();
+    let d = await api(`/admin/fulfil/${oid}`);
+
+    const paint = () => {
+      const f = d.fulfilment, o = d.order || {};
+      const [label, tone] = STAGE[f.stage] || [f.stage, ''];
+      const open = !['done', 'cancelled'].includes(f.stage);
+      html(`
+        <h1>#${esc(o.code || oid)}</h1>
+        <p class="sub">${esc(o.product_name || '')} × ${o.qty || 1}
+          · <span class="pill ${tone}">${label}</span></p>
+        <div class="card">
+          <div class="between"><span class="muted small">Buyer</span>
+            <span class="trunc">${esc((d.user && d.user.first_name) || 'Unnamed')}
+              ${d.user && d.user.username ? '@' + esc(d.user.username) : ''}</span></div>
+          <div class="between" style="margin-top:10px"><span class="muted small">Number</span>
+            <b class="num">${f.number ? esc(f.number) : '—'}</b></div>
+        </div>
+
+        <div id="thread" class="wallet" style="margin-top:12px">
+          ${(d.messages || []).map((m) => `
+            <div class="between small" style="margin:6px 0;gap:10px">
+              <span class="grow" style="white-space:pre-wrap;${
+                m.sender === 'system' ? 'font-style:italic;opacity:.6'
+                : m.sender === 'admin' ? 'text-align:right' : ''}">${
+                m.sender === 'user' ? '👤 ' : m.sender === 'admin' ? '🛠 ' : ''
+                }${esc(m.body)}</span>
+            </div>`).join('') || '<p class="sub">No messages yet.</p>'}
+        </div>
+
+        ${open ? `
+          <label style="margin-top:14px">Message the buyer</label>
+          <div class="row"><input id="msg" placeholder="Type a reply…">
+            <button class="mini" id="send">Send</button></div>
+          <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
+            <button class="ghost mini" id="otp">🔑 Request OTP</button>
+            <button class="ghost mini" id="done">✅ Mark complete</button>
+            <button class="ghost mini danger-text" id="cancel">↩ Cancel & refund</button>
+          </div>`
+        : `<p class="sub" style="margin-top:14px">This order is closed.</p>`}`);
+
+      const t = view.querySelector('#thread');
+      if (t) t.scrollTop = t.scrollHeight;
+
+      const act = async (bodyObj, okMsg) => {
+        try {
+          d = await api(`/admin/fulfil/${oid}`, { method: 'POST', body: bodyObj });
+          toast(okMsg); paint();
+        } catch (e) { toast(e.message || 'Failed', 'err'); }
+      };
+
+      on('#send', 'click', () => {
+        const el = view.querySelector('#msg');
+        const text = el.value.trim();
+        if (!text) return toast('Write a message', 'err');
+        act({ action: 'send', text }, 'Sent');
+      });
+      on('#msg', 'keydown', (e) => {
+        if (e.key === 'Enter') view.querySelector('#send').click();
+      });
+      on('#otp', 'click', () => act({ action: 'ask_otp' }, 'Asked for the OTP'));
+      on('#done', 'click', () => confirmDelete(
+        'Mark this order complete?',
+        'The buyer is told it is activated, and one-time codes in the transcript are redacted.',
+        () => act({ action: 'complete' }, 'Order completed')));
+      on('#cancel', 'click', () => confirmDelete(
+        'Cancel and refund?',
+        'The full amount goes back to the buyer\u2019s wallet balance.',
+        () => act({ action: 'cancel' }, 'Refunded')));
+    };
+    paint();
   });
 }
 

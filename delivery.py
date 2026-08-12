@@ -64,7 +64,9 @@ async def settle(bot: Bot, oid: int, ref: str | None = None) -> bool:
     o = await db.order(oid)
     if not o:
         return False
-    if o["status"] in {"paid", "delivered"}:
+    # `fulfilling` counts as handled: a manual order is mid-conversation, and a
+    # replayed webhook must not restart it or ask the buyer for the number twice.
+    if o["status"] in {"paid", "delivered", "fulfilling"}:
         return True                      # already handled — never double-deliver
     if o["status"] in {"expired", "cancelled"} and o["pay_address"]:
         # Money that arrived after the order closed. The goods aren't sent —
@@ -135,6 +137,14 @@ async def deliver(bot: Bot, oid: int) -> bool:
     if p is None:
         await _refund(bot, o, "the product is no longer available")
         return False
+
+    # Manual products have nothing to hand over yet: the goods are activated by
+    # a person, against a number the buyer has not given us. Diverting here —
+    # after the payment confirmation, before allocation — means no stock line is
+    # consumed and the order lands in a state settle() still counts as handled,
+    # so a duplicate webhook can't push it through delivery a second time.
+    if "manual" in p.keys() and p["manual"]:
+        return await start_fulfilment(bot, oid, p)
 
     if p["infinite"]:
         payloads = [p["static_payload"]] * o["qty"]
@@ -276,6 +286,169 @@ async def _credit_late(bot: Bot, o, ref: str | None) -> bool:
              f"<code>{o['user_id']}</code>'s wallet.")
     log.info("late payment on order %s credited: %s", o["id"], amount)
     return True
+
+
+# --------------------------------------------------------------- fulfilment
+# Manual orders: the buyer supplies a number, an operator activates the service
+# against it, the buyer relays back the OTP the provider sends them. The whole
+# exchange is a free-form chat relayed between Telegram and the web panel; the
+# `stage` only records whose turn it is, so nobody has to read the transcript to
+# see what the order is waiting on.
+
+NUDGE_AFTER_MIN = 30
+"""How long a buyer may sit on an unanswered prompt before being reminded.
+
+Long enough that somebody who stepped away from their phone isn't pestered,
+short enough that an order doesn't quietly die overnight. After one reminder
+the admins are told instead — chasing twice is nagging, and by then it is
+information the operator needs more than the customer does.
+"""
+
+
+async def start_fulfilment(bot: Bot, oid: int, p) -> bool:
+    """Payment confirmed on a manual product: open the thread, ask for the number."""
+    o = await db.order(oid)
+    await db.open_fulfilment(oid, o["user_id"])
+    # cost is snapshotted now, same as an automatic delivery, so profit history
+    # stays true if the cost price is edited while the order is still open
+    await db.set_order(oid, status="fulfilling",
+                       unit_cost=float(p["cost"] or 0) if "cost" in p.keys() else 0)
+    code = o["code"] or oid
+    await db.fulfil_say(oid, "system",
+                        f"Paid — {p['name']} × {o['qty']}. Waiting for the number.")
+    await _safe(bot, o["user_id"],
+                await texts.t("fulfil_ask_number", oid=code,
+                              product=_esc(p["name"]), qty=o["qty"]))
+    await notify_admins(
+        bot, f"🛠 Manual order <b>#{code}</b> — {_esc(p['name'])} × {o['qty']}\n"
+             f"Waiting on the buyer's number. Work it in the admin panel.",
+        skip=o["user_id"])
+    return True
+
+
+async def fulfil_from_user(bot: Bot, uid: int, text: str) -> bool:
+    """A buyer message that belongs to an open manual order. False if none."""
+    f = await db.active_fulfilment(uid)
+    if not f:
+        return False
+    oid = f["order_id"]
+    o = await db.order(oid)
+    code = (o["code"] if o else None) or oid
+    await db.fulfil_say(oid, "user", text)
+
+    if f["stage"] == "awaiting_number":
+        # First reply is the activation number. Captured onto the row rather
+        # than left in the transcript so the panel can show it beside the order
+        # without an operator scrolling the chat for it every time.
+        await db.set_fulfil(oid, number=text.strip()[:64], stage="working", nudged=0)
+        await _safe(bot, uid, await texts.t("fulfil_got_number", oid=code))
+        await notify_admins(bot, f"🔢 <b>#{code}</b> number received — activate it.",
+                            skip=uid)
+    else:
+        if f["stage"] == "awaiting_otp":
+            await db.set_fulfil(oid, stage="working", nudged=0)
+            await _safe(bot, uid, await texts.t("fulfil_got_otp", oid=code))
+        await notify_admins(bot, f"💬 <b>#{code}</b> buyer replied.", skip=uid)
+    return True
+
+
+async def fulfil_to_user(bot: Bot, oid: int, text: str) -> bool:
+    """An operator's message, sent from the panel out to the buyer."""
+    f = await db.fulfilment(oid)
+    if not f:
+        return False
+    o = await db.order(oid)
+    await db.fulfil_say(oid, "admin", text)
+    await _safe(bot, f["user_id"],
+                await texts.t("fulfil_admin_msg", oid=(o["code"] if o else None) or oid,
+                              body=_esc(text)))
+    return True
+
+
+async def fulfil_request_otp(bot: Bot, oid: int) -> bool:
+    """Prompt for a one-time code. Repeatable: providers often send a second."""
+    f = await db.fulfilment(oid)
+    if not f:
+        return False
+    o = await db.order(oid)
+    code = (o["code"] if o else None) or oid
+    await db.set_fulfil(oid, stage="awaiting_otp", nudged=0)
+    await db.fulfil_say(oid, "system", "Asked the buyer for the OTP.")
+    await _safe(bot, f["user_id"], await texts.t("fulfil_ask_otp", oid=code))
+    return True
+
+
+async def fulfil_complete(bot: Bot, oid: int) -> bool:
+    """Activated and confirmed. This is the only path that marks it delivered."""
+    o = await db.order(oid)
+    f = await db.fulfilment(oid)
+    if not o or not f or o["status"] == "delivered":
+        return False
+    note = (f["note"] or "").strip()
+    await db.set_order(oid, status="delivered",
+                       delivered_text=note or "Activated by the operator.")
+    if o["product_id"]:
+        await db.ex("UPDATE products SET sold_count = sold_count + ? WHERE id = ?",
+                    (o["qty"], o["product_id"]))
+    await db.set_fulfil(oid, stage="done")
+    await db.fulfil_say(oid, "system", "Marked complete.")
+    # Codes are useless now and a liability stored. The number and the wording
+    # of the conversation stay; only the one-time codes go.
+    try:
+        await db.fulfil_scrub(oid)
+    except Exception as e:                              # pragma: no cover
+        log.warning("could not scrub codes on #%s: %s", oid, e)
+    await _safe(bot, o["user_id"],
+                await texts.t("fulfil_done", oid=o["code"] or oid,
+                              product=_esc(o["product_name"] or ""),
+                              note=("\n\n" + _esc(note)) if note else ""),
+                reply_markup=k.home_kb())
+    return True
+
+
+async def fulfil_cancel(bot: Bot, oid: int, reason: str = "") -> bool:
+    """Couldn't be activated. Refunds to wallet through the ordinary path."""
+    o = await db.order(oid)
+    f = await db.fulfilment(oid)
+    if not o or not f or o["status"] == "delivered":
+        return False
+    await db.set_fulfil(oid, stage="cancelled")
+    await db.fulfil_say(oid, "system", f"Cancelled and refunded. {reason}".strip())
+    await _refund(bot, o, reason or "it could not be activated")
+    return True
+
+
+async def nudge_fulfilments(bot: Bot) -> None:
+    """Chase buyers who have gone quiet, once, then hand it to the admins.
+
+    Only stages where we are waiting on them. The reminder is deliberately the
+    same prompt again rather than a scolding: most people simply missed the
+    message, and the useful thing to resend is the question.
+    """
+    try:
+        stale = await db.fulfil_stale(NUDGE_AFTER_MIN)
+    except Exception as e:                              # pragma: no cover
+        log.warning("could not scan for stale fulfilments: %s", e)
+        return
+    for f in stale:
+        oid = f["order_id"]
+        o = await db.order(oid)
+        if not o or o["status"] != "fulfilling":
+            continue
+        code = o["code"] or oid
+        kind = "fulfil_nudge_number" if f["stage"] == "awaiting_number" \
+            else "fulfil_nudge_otp"
+        try:
+            await _safe(bot, f["user_id"], await texts.t(kind, oid=code))
+            await db.ex("UPDATE fulfilment SET nudged = nudged + 1 WHERE order_id = ?",
+                        (oid,))
+            await db.fulfil_say(oid, "system", "Reminder sent to the buyer.")
+            await notify_admins(
+                bot, f"⏳ <b>#{code}</b> — no reply for {NUDGE_AFTER_MIN} min. "
+                     f"Buyer reminded; it may need a manual follow-up.",
+                skip=f["user_id"])
+        except Exception as e:
+            log.warning("nudge failed for #%s: %s", oid, e)
 
 
 async def _refund(bot: Bot, o, reason: str) -> None:

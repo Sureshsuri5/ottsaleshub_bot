@@ -144,6 +144,35 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- Orders for products that a human has to activate: the buyer supplies a
+-- number, the operator triggers the service, the buyer relays the OTP back.
+-- One row per order, holding only the current position in that conversation.
+CREATE TABLE IF NOT EXISTS fulfilment (
+    order_id    INTEGER PRIMARY KEY REFERENCES orders(id) ON DELETE CASCADE,
+    user_id     INTEGER NOT NULL REFERENCES users(tg_id),
+    stage       TEXT    NOT NULL DEFAULT 'awaiting_number',
+        -- awaiting_number | awaiting_otp | working | done | cancelled
+    number      TEXT    NOT NULL DEFAULT '',
+    note        TEXT    NOT NULL DEFAULT '',
+    nudged      INTEGER NOT NULL DEFAULT 0,   -- reminders already sent
+    unread      INTEGER NOT NULL DEFAULT 0,   -- buyer messages the panel hasn't shown
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_fulfil_stage ON fulfilment(stage, updated_at);
+
+-- The transcript. `sender` is 'user', 'admin' or 'system'; system lines are
+-- the state changes, so the thread reads as one story rather than needing a
+-- separate audit log beside it.
+CREATE TABLE IF NOT EXISTS fulfil_msgs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id   INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    sender     TEXT    NOT NULL,
+    body       TEXT    NOT NULL,
+    created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_fulfil_msgs ON fulfil_msgs(order_id, id);
 """
 
 _conn: aiosqlite.Connection | None = None
@@ -425,6 +454,8 @@ async def _migrate() -> None:
         "ALTER TABLE users ALTER COLUMN tg_id TYPE BIGINT",
         "ALTER TABLE users ALTER COLUMN referred_by TYPE BIGINT",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_code ON orders(code)",
+        # manual=1 -> no stock line exists; an operator activates it by hand
+        "ALTER TABLE products ADD COLUMN manual INTEGER NOT NULL DEFAULT 0",
     ):
         try:
             await ex(stmt)
@@ -1290,9 +1321,14 @@ async def order_counts() -> dict:
         "  WHERE status IN ('pending','awaiting_review')) open, "
         "(SELECT COUNT(*) FROM orders WHERE status = 'awaiting_review') review, "
         "(SELECT COUNT(*) FROM orders WHERE status = 'delivered') delivered, "
+        "(SELECT COUNT(*) FROM orders WHERE status = 'fulfilling') fulfilling, "
+        "(SELECT COALESCE(SUM(unread), 0) FROM fulfilment "
+        "  WHERE stage IN ('awaiting_number','awaiting_otp','working')) fulfil_unread, "
         "(SELECT COUNT(*) FROM orders) all_orders")
     return {"open": r["open"], "review": r["review"],
-            "delivered": r["delivered"], "all": r["all_orders"]}
+            "delivered": r["delivered"], "fulfilling": r["fulfilling"],
+            "fulfil_unread": r["fulfil_unread"],
+            "all": r["all_orders"]}
 
 
 async def alert_counts() -> dict:
@@ -1574,6 +1610,122 @@ async def list_users(term: str = "", limit: int = 50, offset: int = 0):
     return await q("SELECT * FROM users WHERE LOWER(username) LIKE LOWER(?) "
                    "OR LOWER(first_name) LIKE LOWER(?) LIMIT ?",
                    (f"%{term}%", f"%{term}%", limit))
+
+
+# --------------------------------------------------------------- fulfilment
+# Orders a human has to work by hand. Everything here is keyed on order_id:
+# an order has at most one fulfilment, and the transcript hangs off the same id.
+
+OPEN_STAGES = ("awaiting_number", "awaiting_otp", "working")
+
+
+async def open_fulfilment(oid: int, uid: int) -> None:
+    """Start the conversation. Idempotent, because settle() can be re-entered
+    by a duplicate webhook and a second row would orphan the first thread."""
+    # ON CONFLICT rather than INSERT OR IGNORE: the SQLite->PG translation
+    # rewrites the latter to a bare INSERT, which raises on a duplicate key
+    # instead of ignoring it. This form means the same thing on both engines.
+    await ex("INSERT INTO fulfilment (order_id, user_id) VALUES (?, ?) "
+             "ON CONFLICT DO NOTHING", (oid, uid))
+
+
+async def fulfilment(oid: int):
+    return await q1("SELECT * FROM fulfilment WHERE order_id = ?", (oid,))
+
+
+async def set_fulfil(oid: int, **fields) -> None:
+    fields["updated_at"] = now()
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    await ex(f"UPDATE fulfilment SET {cols} WHERE order_id = ?",
+             (*fields.values(), oid))
+
+
+async def active_fulfilment(uid: int):
+    """The one open order this buyer's messages belong to.
+
+    Newest first: if somebody has two manual orders running, their next message
+    is far more likely to be about the one just started than the older one.
+    """
+    marks = ",".join("?" * len(OPEN_STAGES))
+    return await q1(f"SELECT * FROM fulfilment WHERE user_id = ? "
+                    f"AND stage IN ({marks}) ORDER BY order_id DESC LIMIT 1",
+                    (uid, *OPEN_STAGES))
+
+
+async def fulfil_say(oid: int, sender: str, body: str) -> None:
+    """Append to the transcript. A buyer line also raises the unread flag, which
+    is what puts a badge on the queue so a reply isn't left sitting for hours."""
+    await ex("INSERT INTO fulfil_msgs (order_id, sender, body) VALUES (?, ?, ?)",
+             (oid, sender, body))
+    if sender == "user":
+        await ex("UPDATE fulfilment SET unread = unread + 1, updated_at = ? "
+                 "WHERE order_id = ?", (now(), oid))
+
+
+async def fulfil_thread(oid: int, limit: int = 200):
+    return await q("SELECT * FROM fulfil_msgs WHERE order_id = ? "
+                   "ORDER BY id LIMIT ?", (oid, limit))
+
+
+async def fulfil_seen(oid: int) -> None:
+    await ex("UPDATE fulfilment SET unread = 0 WHERE order_id = ?", (oid,))
+
+
+async def fulfil_queue(closed: bool = False, limit: int = 100):
+    """The work list, oldest-touched first — the queue is a queue, so the order
+    waiting longest for a reply sits at the top rather than the newest one."""
+    marks = ",".join("?" * len(OPEN_STAGES))
+    where = (f"f.stage NOT IN ({marks})" if closed else f"f.stage IN ({marks})")
+    return await q(
+        "SELECT f.*, o.code, o.product_name, o.qty, o.amount, o.status, "
+        "       u.username, u.first_name "
+        "FROM fulfilment f "
+        "JOIN orders o ON o.id = f.order_id "
+        "LEFT JOIN users u ON u.tg_id = f.user_id "
+        f"WHERE {where} "
+        "ORDER BY f.unread DESC, f.updated_at ASC LIMIT ?",
+        (*OPEN_STAGES, limit))
+
+
+async def fulfil_counts() -> dict:
+    marks = ",".join("?" * len(OPEN_STAGES))
+    r = await q1(f"SELECT COUNT(*) open, COALESCE(SUM(unread), 0) unread "
+                 f"FROM fulfilment WHERE stage IN ({marks})", OPEN_STAGES)
+    return {"open": r["open"], "unread": r["unread"]}
+
+
+async def fulfil_stale(minutes: int, max_nudges: int = 1):
+    """Waiting on the buyer, untouched for `minutes`, not yet chased.
+
+    Only the two stages where the ball is in the buyer's court. An order in
+    `working` is waiting on the operator, and reminding a customer about that
+    would be blaming them for a delay that is ours.
+    """
+    return await q(
+        "SELECT * FROM fulfilment WHERE stage IN ('awaiting_number', 'awaiting_otp') "
+        "AND nudged < ? AND updated_at <= datetime('now', ?)",
+        (max_nudges, f"-{int(minutes)} minutes"))
+
+
+async def fulfil_scrub(oid: int) -> int:
+    """Redact one-time codes once the order is done.
+
+    An OTP is worthless after use but toxic in storage, and a support
+    transcript is exactly the sort of table that gets exported and emailed
+    around. The activation number and the wording of the conversation stay —
+    only bare 4-to-8 digit runs in buyer messages go, which is what an OTP
+    looks like and what a phone number, price or order code does not.
+    """
+    rows = await q("SELECT id, body FROM fulfil_msgs WHERE order_id = ? "
+                   "AND sender = 'user'", (oid,))
+    import re as _re
+    n = 0
+    for r in rows:
+        new = _re.sub(r"(?<!\d)\d{4,8}(?!\d)", "[code redacted]", r["body"])
+        if new != r["body"]:
+            await ex("UPDATE fulfil_msgs SET body = ? WHERE id = ?", (new, r["id"]))
+            n += 1
+    return n
 
 
 async def top_referrers(limit: int = 100, offset: int = 0):

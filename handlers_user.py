@@ -1443,6 +1443,45 @@ async def download_order(c: CallbackQuery):
 
 
 # Any stray text outside a form just re-opens the menu.
+async def _in_fulfilment(m: Message) -> bool:
+    """True when this buyer has a manual order mid-conversation.
+
+    A filter rather than a check inside the handler: aiogram stops at the first
+    handler whose filters pass, so a handler matching all text that then decided
+    to do nothing would swallow the menu fallback below it. Registered after the
+    FSM-state handlers, so a buyer part-way through a deposit or withdrawal is
+    answering that prompt, not this one.
+    """
+    if not m.from_user:
+        return False
+    try:
+        return bool(await db.active_fulfilment(m.from_user.id))
+    except Exception:
+        return False
+
+
+@router.message(F.text, _in_fulfilment)
+async def fulfilment_relay(m: Message):
+    text = (m.text or "").strip()
+    if not text:
+        return
+    if not await delivery.fulfil_from_user(m.bot, m.from_user.id, text):
+        # the order closed between the filter and here — treat it as ordinary
+        await send_menu(m)
+
+
+@router.message(F.photo, _in_fulfilment)
+async def fulfilment_photo(m: Message):
+    """Screenshots are the usual reflex when someone is asked for a code.
+
+    The panel is text-only, so rather than let the image vanish into a chat
+    nobody is reading, say plainly that it wasn't received and ask for the
+    digits — which is what the operator needs to type anyway.
+    """
+    await m.answer("📷 We can't open images here — please <b>type the code</b> "
+                   "or the number as text and we'll pick it up right away.")
+
+
 @router.message(F.text)
 async def fallback(m: Message):
     await send_menu(m)
