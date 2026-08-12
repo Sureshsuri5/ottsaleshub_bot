@@ -712,6 +712,7 @@ function usersView(q = '') {
     html(`
       <h1>Users</h1>
       <input id="q" placeholder="Search by name, @username or id" value="${esc(q)}">
+      <button class="ghost mini" id="refsBtn" style="margin-top:8px">🤝 Referrers</button>
       <div style="height:12px"></div>
       ${list.length ? list.map((u) => `
         <div class="card" data-u="${u.tg_id}" role="button" tabindex="0">
@@ -731,6 +732,46 @@ function usersView(q = '') {
     let t;
     on('#q', 'input', (e) => { clearTimeout(t);
       t = setTimeout(() => usersView(e.target.value), 350); });
+    on('#refsBtn', 'click', () => referrersView());
+    view.querySelectorAll('[data-u]').forEach((el) =>
+      el.onclick = () => userView(Number(el.dataset.u)));
+  });
+}
+
+function referrersView() {
+  pushScreen(async () => {
+    loading();
+    const list = await api('/admin/referrers');
+    const invites = list.reduce((n, u) => n + u.invited, 0);
+    const buyers = list.reduce((n, u) => n + u.buyers, 0);
+    html(`
+      <h1>Referrers</h1>
+      <p class="sub">Everyone who has invited at least one person.</p>
+      ${list.length ? `
+        <div class="card">
+          <div class="between"><span class="muted small">Referrers</span>
+            <b class="num">${list.length}</b></div>
+          <div class="between" style="margin-top:10px"><span class="muted small">Invited</span>
+            <span class="num">${invites}</span></div>
+          <div class="between" style="margin-top:10px"><span class="muted small">Of those, bought</span>
+            <span class="num">${buyers}</span></div>
+        </div>
+        <div style="height:12px"></div>
+        ${list.map((u) => `
+        <div class="card" data-u="${u.tg_id}" role="button" tabindex="0">
+          <div class="between">
+            <div class="grow trunc"><b>${esc(u.first_name || 'Unnamed')}</b>
+              <span class="muted small">${u.username ? '@' + esc(u.username) : ''}</span></div>
+            <span class="num">${u.invited} invited</span>
+          </div>
+          <div class="between small muted" style="margin-top:6px">
+            <span class="num">${u.tg_id}</span>
+            <span>${u.buyers} bought · earned ${money(u.ref_earned)}
+              ${u.is_banned ? '<span class="pill bad">Banned</span>' : ''}</span>
+          </div>
+        </div>`).join('')}`
+        : `<div class="empty"><b>No referrers yet</b>Nobody has invited anyone so far.</div>`}`);
+
     view.querySelectorAll('[data-u]').forEach((el) =>
       el.onclick = () => userView(Number(el.dataset.u)));
   });

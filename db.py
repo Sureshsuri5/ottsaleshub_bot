@@ -1576,6 +1576,34 @@ async def list_users(term: str = "", limit: int = 50, offset: int = 0):
                    (f"%{term}%", f"%{term}%", limit))
 
 
+async def top_referrers(limit: int = 100, offset: int = 0):
+    """Everyone who has invited at least one person, busiest first.
+
+    A LEFT JOIN onto referrals-who-bought rather than a correlated subquery per
+    row: the buyer count is the interesting column here — an inviter with forty
+    signups and no purchases is farming the programme, and that only shows up
+    when both numbers sit side by side.
+
+    HAVING on the count is what enforces "at least one": users with no invites
+    are the overwhelming majority and there is no reason to page through them.
+    """
+    return await q(
+        "SELECT u.tg_id, u.username, u.first_name, u.balance, u.is_banned, "
+        "       u.ref_earned, u.ref_available, u.ref_transferred, "
+        "       COUNT(r.tg_id) AS invited, "
+        "       COALESCE(SUM(CASE WHEN b.uid IS NOT NULL THEN 1 ELSE 0 END), 0) AS buyers "
+        "FROM users u "
+        "JOIN users r ON r.referred_by = u.tg_id "
+        "LEFT JOIN (SELECT DISTINCT user_id AS uid FROM orders "
+        "           WHERE status = 'delivered' AND kind = 'purchase') b "
+        "       ON b.uid = r.tg_id "
+        "GROUP BY u.tg_id, u.username, u.first_name, u.balance, u.is_banned, "
+        "         u.ref_earned, u.ref_available, u.ref_transferred "
+        "HAVING COUNT(r.tg_id) >= 1 "
+        "ORDER BY invited DESC, u.ref_earned DESC "
+        "LIMIT ? OFFSET ?", (limit, offset))
+
+
 async def user_summary(tg_id: int) -> dict:
     r = await q1("SELECT COUNT(*) c, "
                  "COALESCE(SUM(COALESCE(amount,0) + COALESCE(balance_used,0)),0) s "

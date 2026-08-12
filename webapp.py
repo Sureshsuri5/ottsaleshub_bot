@@ -889,6 +889,11 @@ async def adm_users(request):
         for u in users])
 
 
+async def adm_referrers(request):
+    rows = await db.top_referrers(200)
+    return web.json_response([dict(r) for r in rows])
+
+
 async def adm_user_action(request):
     uid = int(request.match_info["uid"])
     d = await body(request)
@@ -1473,6 +1478,7 @@ def build_app(bot: Bot) -> web.Application:
     r.add_get("/api/admin/wallet", adm_wallet)
     r.add_post("/api/admin/wallet/hide", adm_wallet_hide)
     r.add_get("/api/admin/users", adm_users)
+    r.add_get("/api/admin/referrers", adm_referrers)
     r.add_post("/api/admin/user/{uid}", adm_user_action)
     r.add_post("/api/admin/broadcast", adm_broadcast)
     r.add_get("/api/admin/settings", adm_settings)
