@@ -251,6 +251,41 @@ def _pg_sql(sql: str) -> str:
     return out
 
 
+_RLS_LOCKDOWN = """
+do $$
+declare t record;
+begin
+  for t in select tablename from pg_tables where schemaname = 'public'
+  loop
+    execute format('alter table public.%I enable row level security', t.tablename);
+  end loop;
+end $$;
+revoke all on all tables in schema public from anon, authenticated;
+revoke all on all sequences in schema public from anon, authenticated;
+alter default privileges in schema public revoke all on tables from anon, authenticated;
+"""
+
+
+async def _pg_lock_down() -> None:
+    """Enable RLS on every public table and strip the PostgREST roles' grants.
+
+    Supabase exposes the whole `public` schema over PostgREST using the anon
+    key, which ships in client code and is therefore public. Without RLS, that
+    key reads `stock` — the undelivered goods — straight out of the database.
+    We connect as `postgres`, which bypasses RLS, so this costs us nothing.
+
+    Idempotent, so it runs on every boot and covers tables added by future
+    migrations. Never fatal: a managed instance may not grant us the rights to
+    revoke, and losing the bot over a hardening step we cannot apply is a worse
+    outcome than logging it and carrying on.
+    """
+    try:
+        await _pg_run(lambda con: con.execute(_RLS_LOCKDOWN))
+        log.info("RLS enabled on all public tables")
+    except Exception as e:                              # pragma: no cover
+        log.warning("could not apply RLS lockdown: %s", e)
+
+
 async def init(path: str) -> None:
     """SQLite by default; Postgres when DATABASE_URL is set.
 
@@ -300,6 +335,7 @@ async def init(path: str) -> None:
             schema = schema.replace(a, b)
         await _pg_run(lambda con: con.execute(schema))
         await _migrate()
+        await _pg_lock_down()
         return
 
     _conn = await aiosqlite.connect(path)
