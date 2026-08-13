@@ -1020,22 +1020,76 @@ async def adm_user_action(request):
     return web.json_response({**dict(u), **await db.user_summary(uid)})
 
 
+def personalise(text: str, row: dict) -> str:
+    """Fill the name placeholders for one recipient.
+
+    Plain replacement rather than str.format: a broadcast is written by hand and
+    will contain stray braces sooner or later — a price in {} or an emoji — and
+    format() would raise on those and drop the whole send.
+
+    The fallback matters as much as the substitution. Telegram makes first_name
+    mandatory, but a blank one slips through, and "Hi ," reads worse than no
+    name at all.
+    """
+    name = (row.get("first_name") or "").strip() or "there"
+    user = (row.get("username") or "").strip()
+    out = text.replace("{name}", name)
+    return out.replace("{username}", f"@{user}" if user else name)
+
+
+async def _run_broadcast(bot, rows: list[dict], text: str, by: int) -> None:
+    """Send to everyone, then report back. Runs detached from the request.
+
+    A few hundred recipients at Telegram's rate limit takes longer than any
+    sensible HTTP timeout, so the request returns as soon as the audience is
+    resolved and this carries on in the background. The admin gets a DM with
+    the outcome, which is also the only place a partial failure is visible.
+    """
+    import asyncio
+    sent = failed = blocked = 0
+    for row in rows:
+        try:
+            await bot.send_message(row["tg_id"], personalise(text, row))
+            sent += 1
+        except Exception as e:
+            # someone who blocked the bot is an expected outcome at this scale,
+            # not an error worth flagging separately to the admin
+            if "blocked" in str(e).lower() or "chat not found" in str(e).lower():
+                blocked += 1
+            else:
+                failed += 1
+        await asyncio.sleep(0.05)          # ~20/s, inside Telegram's limit
+    try:
+        await bot.send_message(
+            by, f"📣 <b>Broadcast finished</b>\n\nDelivered: <b>{sent}</b>"
+                f"\nBlocked the bot: {blocked}\nFailed: {failed}"
+                f"\nAudience: {len(rows)}")
+    except Exception:                                   # pragma: no cover
+        log.warning("broadcast finished but the summary DM failed")
+
+
 async def adm_broadcast(request):
-    text = str((await body(request)).get("text", "")).strip()
+    d = await body(request)
+    text = str(d.get("text", "")).strip()
+    audience = str(d.get("audience", "all")).strip()
     if not text:
         return web.json_response({"error": "Write the message first."}, status=400)
+
+    rows = await db.broadcast_targets(audience)
+    if not rows:
+        return web.json_response(
+            {"error": "Nobody in that audience yet."}, status=400)
+
+    # a dry run so the panel can show who it would reach, and what one of them
+    # will actually see, before anything is sent
+    if d.get("preview"):
+        return web.json_response({"total": len(rows),
+                                  "sample": personalise(text, rows[0])})
+
     import asyncio
-    bot = request.app["bot"]
-    ids = await db.all_user_ids()
-    sent = failed = 0
-    for uid in ids:
-        try:
-            await bot.send_message(uid, text)
-            sent += 1
-        except Exception:
-            failed += 1
-        await asyncio.sleep(0.05)
-    return web.json_response({"sent": sent, "failed": failed, "total": len(ids)})
+    asyncio.create_task(_run_broadcast(
+        request.app["bot"], rows, text, request["uid"]))
+    return web.json_response({"queued": len(rows), "audience": audience})
 
 
 async def adm_texts(request):

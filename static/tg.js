@@ -70,6 +70,18 @@ export const session = {
   },
 };
 
+// Anyone signed in before this change has a token in sessionStorage, and get()
+// prefers that store — so the old tab-scoped token would shadow the persistent
+// one and they would be signed out again the next time the tab closed. Move it
+// across once, on load, so the upgrade doesn't cost a sign-in.
+try {
+  const stale = sessionStorage.getItem('session');
+  if (stale) {
+    localStorage.setItem('session', stale);
+    sessionStorage.removeItem('session');
+  }
+} catch (_) { /* private mode with storage disabled — nothing to migrate */ }
+
 export async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (tg?.initData) headers['X-Init-Data'] = tg.initData;
@@ -88,7 +100,7 @@ export async function api(path, opts = {}) {
   // out. Kept in whichever store the current one lives in, so a tab-scoped
   // session isn't quietly promoted to a persistent one by a renewal.
   const fresh = res.headers.get('X-Session-Renew');
-  if (fresh) session.set(fresh, Boolean(sessionStorage.getItem('session')));
+  if (fresh) session.set(fresh);
   if (!res.ok) throw new Error(data?.error || describe(res.status));
   return data;
 }
