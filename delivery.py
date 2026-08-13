@@ -306,7 +306,31 @@ information the operator needs more than the customer does.
 
 
 async def start_fulfilment(bot: Bot, oid: int, p) -> bool:
-    """Payment confirmed on a manual product: open the thread, ask for the number."""
+    """Payment confirmed on a manual product: open the thread, ask for the number.
+
+    Wrapped end to end because everything here happens *after* the buyer's money
+    has arrived. An exception escaping this used to leave them paid, holding a
+    confirmation, with no prompt and no explanation — and nothing in the log
+    tying the silence to the order. Now it is caught, the admins are told, and
+    the buyer is told something went wrong rather than being left waiting.
+    """
+    try:
+        return await _start_fulfilment(bot, oid, p)
+    except Exception as e:
+        log.exception("could not start fulfilment for order %s", oid)
+        o = await db.order(oid)
+        code = (o["code"] if o else None) or oid
+        await _safe(bot, o["user_id"] if o else 0,
+                    f"⚠️ We hit a problem setting up order <b>#{code}</b>. "
+                    f"Your payment is safe — our team has been alerted and will "
+                    f"message you here shortly.")
+        await notify_admins(
+            bot, f"🚨 <b>Order #{code} could not start fulfilment</b>\n"
+                 f"The buyer has paid and is waiting. Error: <code>{_esc(str(e))}</code>")
+        return False
+
+
+async def _start_fulfilment(bot: Bot, oid: int, p) -> bool:
     o = await db.order(oid)
     await db.open_fulfilment(oid, o["user_id"])
     # Snapshot the supplier now. Reading it from the product at display time

@@ -162,8 +162,12 @@ CREATE TABLE IF NOT EXISTS settings (
 -- number, the operator triggers the service, the buyer relays the OTP back.
 -- One row per order, holding only the current position in that conversation.
 CREATE TABLE IF NOT EXISTS fulfilment (
-    order_id    INTEGER PRIMARY KEY REFERENCES orders(id) ON DELETE CASCADE,
-    user_id     INTEGER NOT NULL REFERENCES users(tg_id),
+    order_id    BIGINT  PRIMARY KEY REFERENCES orders(id) ON DELETE CASCADE,
+    -- BIGINT written out rather than INTEGER: the SQLite->PG rewrite matches
+    -- the users(tg_id) foreign key by exact whitespace, and a width this
+    -- column got wrong silently becomes int4 on Postgres. Telegram ids above
+    -- 2^31 then fail to insert, which kills the order mid-fulfilment.
+    user_id     BIGINT  NOT NULL REFERENCES users(tg_id),
     stage       TEXT    NOT NULL DEFAULT 'awaiting_number',
         -- awaiting_number | awaiting_otp | working | done | cancelled
     number      TEXT    NOT NULL DEFAULT '',
@@ -180,7 +184,7 @@ CREATE INDEX IF NOT EXISTS idx_fulfil_stage ON fulfilment(stage, updated_at);
 -- separate audit log beside it.
 CREATE TABLE IF NOT EXISTS fulfil_msgs (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    order_id   INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    order_id   BIGINT  NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
     sender     TEXT    NOT NULL,
     body       TEXT    NOT NULL,
     created_at TEXT    NOT NULL DEFAULT (datetime('now'))
@@ -474,6 +478,14 @@ async def _migrate() -> None:
         # snapshotted onto the order: reassigning a product later must not move
         # orders a maker is already part-way through, nor hide finished ones
         "ALTER TABLE fulfilment ADD COLUMN maker_id INTEGER",
+        # Repair for databases created before the BIGINT fix above. On Postgres
+        # these columns were made int4 because the type-rewrite rule missed
+        # them, so any Telegram id past 2^31 failed to insert and the order
+        # died silently after payment. No-ops on SQLite, where the statement
+        # simply raises and is skipped like any already-applied migration.
+        "ALTER TABLE fulfilment ALTER COLUMN user_id TYPE BIGINT",
+        "ALTER TABLE fulfilment ALTER COLUMN order_id TYPE BIGINT",
+        "ALTER TABLE fulfil_msgs ALTER COLUMN order_id TYPE BIGINT",
     ):
         try:
             await ex(stmt)
