@@ -64,7 +64,12 @@ def verify_init_data(init_data: str, max_age: int = 86400) -> dict | None:
 
 
 # ---- browser sessions (Telegram Login Widget) --------------------------
-SESSION_TTL = 30 * 24 * 3600
+# A session lasts until it is signed out. Ten years rather than a literal
+# never: the token carries its own expiry, and a field that can't expire has no
+# way to be shortened later if that turns out to be a mistake. The renewal
+# below still slides it forward, so an active session never approaches even
+# this. Sign out is the way off a device.
+SESSION_TTL = 10 * 365 * 24 * 3600
 
 
 def _sign(payload: str) -> str:
