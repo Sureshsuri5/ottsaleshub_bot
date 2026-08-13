@@ -158,15 +158,56 @@ async def redeem_login(token: str) -> int | None:
 
 
 def read_session(token: str) -> int | None:
+    """The admin/buyer session. Maker tokens are deliberately not accepted.
+
+    A maker token carries an `m` prefix on its subject, so int() below rejects
+    it — but only because the ValueError is caught. Without that catch this
+    raises a 500 on a token that should simply be refused, and a crash is a
+    worse answer than a denial.
+    """
     try:
         uid, exp, sig = token.split(".")
     except (AttributeError, ValueError):
         return None
     if not hmac.compare_digest(_sign(f"{uid}.{exp}"), sig):
         return None
-    if int(exp) < time.time():
+    try:
+        if int(exp) < time.time():
+            return None
+        return int(uid)
+    except ValueError:
         return None
-    return int(uid)
+
+
+def issue_maker_session(mid: int) -> str:
+    """A maker's session. Same signing key, different subject namespace.
+
+    The `m` prefix is the security boundary. A maker token is not merely
+    flagged as lower-privilege — it cannot be parsed as an admin subject at
+    all, so read_session refuses it without needing to know makers exist.
+    Getting this wrong the other way, with one shared format and a role field
+    checked at each endpoint, means one missed check hands a supplier the shop.
+    """
+    exp = int(time.time()) + SESSION_TTL
+    body = f"m{mid}.{exp}"
+    return f"{body}.{_sign(body)}"
+
+
+def read_maker_session(token: str) -> int | None:
+    try:
+        sub, exp, sig = token.split(".")
+    except (AttributeError, ValueError):
+        return None
+    if not sub.startswith("m"):
+        return None
+    if not hmac.compare_digest(_sign(f"{sub}.{exp}"), sig):
+        return None
+    try:
+        if int(exp) < time.time():
+            return None
+        return int(sub[1:])
+    except ValueError:
+        return None
 
 
 def session_needs_renew(token: str) -> bool:
@@ -216,6 +257,24 @@ PUBLIC_PATHS = {"/api/me", "/api/catalog", "/api/auth/telegram",
 @web.middleware
 async def auth_middleware(request: web.Request, handler: Callable):
     if not request.path.startswith("/api/") or request.path.startswith("/api/v1/"):
+        return await handler(request)
+
+    # Makers are handled first and return early, so a maker request never
+    # reaches the admin logic below. The two paths share no state: a maker
+    # never gets request["uid"] or request["admin"] set at all, so an admin
+    # endpoint reached by mistake finds no user and refuses, rather than
+    # finding a user whose privileges depend on a check being remembered.
+    if request.path.startswith("/api/maker/"):
+        if request.path == "/api/maker/auth":
+            return await handler(request)
+        mid = read_maker_session(request.headers.get("X-Session", "")
+                                 or request.query.get("_session", ""))
+        if mid is None:
+            return web.json_response({"error": "Sign in required."}, status=401)
+        row = await db.maker(mid)
+        if not row or not row["is_active"]:
+            return web.json_response({"error": "Account disabled."}, status=403)
+        request["maker_id"] = mid
         return await handler(request)
 
     user = verify_init_data(request.headers.get("X-Init-Data", "")
@@ -643,7 +702,8 @@ async def adm_product_create(request):
 
 
 ALLOWED_FIELDS = {"name", "description", "price", "is_active", "infinite", "static_payload",
-                  "category_id", "emoji", "icon_emoji_id", "unit", "note", "cost", "manual"}
+                  "category_id", "emoji", "icon_emoji_id", "unit", "note", "cost", "manual",
+                  "maker_id"}
 
 
 async def adm_product_update(request):
@@ -935,6 +995,132 @@ async def adm_users(request):
     return web.json_response([
         {**dict(u), **summaries.get(u["tg_id"], {"orders": 0, "spent": 0})}
         for u in users])
+
+
+async def maker_auth(request):
+    """Maker sign-in. Same rate limits and same vague error as the admin form."""
+    d = await body(request)
+    email = str(d.get("email", "")).strip().lower()[:120]
+    password = str(d.get("password", ""))[:200]
+    ip = request.headers.get("X-Forwarded-For", request.remote or "?").split(",")[0]
+
+    if not _login_ok(f"ip:{ip}") or not _login_ok(f"mk:{email}"):
+        return web.json_response(
+            {"error": "Too many attempts. Wait five minutes."}, status=429)
+
+    row = await db.maker_by_email(email) if email else None
+    if not row or not check_password(password, row["pw_hash"]):
+        log.warning("failed maker login for %r from %s", email, ip)
+        return web.json_response({"error": "Wrong email or password."}, status=401)
+    if not row["is_active"]:
+        return web.json_response({"error": "This account is disabled."}, status=403)
+
+    await db.touch_maker_login(int(row["id"]))
+    _TRIES.pop(f"mk:{email}", None)
+    log.info("maker login by %s", email)
+    return web.json_response({"session": issue_maker_session(int(row["id"])),
+                              "name": row["name"] or row["email"]})
+
+
+async def maker_me(request):
+    m = await db.maker(request["maker_id"])
+    return web.json_response({"name": (m["name"] or m["email"]) if m else "",
+                              "shop": cfg.shop_name})
+
+
+async def maker_orders(request):
+    closed = request.query.get("closed") == "1"
+    rows = await db.maker_queue(request["maker_id"], closed=closed)
+    return web.json_response({"items": [dict(r) for r in rows]})
+
+
+async def maker_thread(request):
+    oid = int(request.match_info["oid"])
+    if not await db.maker_owns(request["maker_id"], oid):
+        return web.json_response({"error": "Not your order."}, status=403)
+    f = await db.fulfilment(oid)
+    o = await db.order(oid)
+    await db.fulfil_seen(oid)
+    # Deliberately no buyer identity. A supplier needs the number to activate
+    # against and the conversation to run — not who the customer is, what else
+    # they have bought, or their Telegram handle.
+    return web.json_response({
+        "order": {"code": (o["code"] if o else None) or oid,
+                  "product_name": o["product_name"] if o else "",
+                  "qty": o["qty"] if o else 1},
+        "fulfilment": {"stage": f["stage"], "number": f["number"],
+                       "note": f["note"]},
+        "messages": [dict(m) for m in await db.fulfil_thread(oid)]})
+
+
+async def maker_action(request):
+    oid = int(request.match_info["oid"])
+    if not await db.maker_owns(request["maker_id"], oid):
+        return web.json_response({"error": "Not your order."}, status=403)
+    d = await body(request)
+    bot = request.app["bot"]
+    act = str(d.get("action", "")).strip()
+
+    # No cancel and no refund: those move money, and money stays with the shop
+    # owner. A maker who cannot activate an order says so in the chat.
+    if act == "send":
+        text = str(d.get("text", "")).strip()
+        if not text:
+            return web.json_response({"error": "Write a message first."}, status=400)
+        if not await delivery.fulfil_to_user(bot, oid, text):
+            return web.json_response({"error": "Could not deliver."}, status=502)
+    elif act == "ask_otp":
+        await delivery.fulfil_request_otp(bot, oid)
+    elif act == "note":
+        await db.set_fulfil(oid, note=str(d.get("note", ""))[:500])
+    elif act == "complete":
+        if not await delivery.fulfil_complete(bot, oid):
+            return web.json_response({"error": "Already closed."}, status=409)
+        m = await db.maker(request["maker_id"])
+        await delivery.notify_admins(
+            bot, f"✅ Order <b>#{oid}</b> completed by "
+                 f"<b>{(m['name'] or m['email']) if m else 'a maker'}</b>.")
+    else:
+        return web.json_response({"error": "Unknown action."}, status=400)
+
+    f = await db.fulfilment(oid)
+    return web.json_response({
+        "fulfilment": {"stage": f["stage"], "number": f["number"],
+                       "note": f["note"]} if f else None,
+        "messages": [dict(m) for m in await db.fulfil_thread(oid)]})
+
+
+# ------------------------------------------------------- maker admin (owner)
+
+async def adm_makers(request):
+    if request.method == "GET":
+        return web.json_response({"makers": [dict(r) for r in await db.makers_list()]})
+    d = await body(request)
+    act = str(d.get("action", "")).strip()
+    if act == "add":
+        email = str(d.get("email", "")).strip().lower()[:120]
+        password = str(d.get("password", ""))
+        if "@" not in email or len(password) < 8:
+            return web.json_response(
+                {"error": "Need an email and a password of 8+ characters."},
+                status=400)
+        if await db.maker_by_email(email):
+            return web.json_response({"error": "That email already exists."},
+                                     status=409)
+        await db.add_maker(email, hash_password(password),
+                           str(d.get("name", "")))
+    elif act == "password":
+        password = str(d.get("password", ""))
+        if len(password) < 8:
+            return web.json_response({"error": "8 characters minimum."}, status=400)
+        await db.set_maker_password(int(d["id"]), hash_password(password))
+    elif act == "active":
+        await db.set_maker_active(int(d["id"]), bool(d.get("active")))
+    elif act == "delete":
+        await db.drop_maker(int(d["id"]))
+    else:
+        return web.json_response({"error": "Unknown action."}, status=400)
+    return web.json_response({"makers": [dict(r) for r in await db.makers_list()]})
 
 
 async def adm_fulfil(request):
@@ -1584,6 +1770,12 @@ def build_app(bot: Bot) -> web.Application:
 
     r.add_get("/", _page("shop.html"))
     r.add_get(cfg.admin_path, _page("admin.html"))
+    r.add_get("/maker", _page("maker.html"))
+    r.add_post("/api/maker/auth", maker_auth)
+    r.add_get("/api/maker/me", maker_me)
+    r.add_get("/api/maker/orders", maker_orders)
+    r.add_get("/api/maker/fulfil/{oid}", maker_thread)
+    r.add_post("/api/maker/fulfil/{oid}", maker_action)
     r.add_get("/health", lambda _: web.Response(text="ok"))
 
     async def _build(_req):
@@ -1657,6 +1849,8 @@ def build_app(bot: Bot) -> web.Application:
     r.add_post("/api/admin/fulfil/{oid}", adm_fulfil_action)
     r.add_post("/api/admin/user/{uid}", adm_user_action)
     r.add_post("/api/admin/broadcast", adm_broadcast)
+    r.add_get("/api/admin/makers", adm_makers)
+    r.add_post("/api/admin/makers", adm_makers)
     r.add_get("/api/admin/settings", adm_settings)
     r.add_post("/api/admin/settings", adm_settings)
     r.add_get("/api/admin/texts", adm_texts)

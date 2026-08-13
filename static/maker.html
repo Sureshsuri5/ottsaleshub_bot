@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fulfilment</title>
+<link rel="stylesheet" href="/static/app.css">
+<script>
+/* Same fatal-error trap as the admin panel: a syntax error inside a module
+   aborts before any module code runs, so only a listener registered out here
+   can report it. Without this the page just goes blank. */
+(function () {
+  var shown = false;
+  function fatal(msg, where) {
+    if (shown) return;
+    shown = true;
+    var v = document.getElementById('view');
+    if (!v) return;
+    v.innerHTML =
+      '<div class="empty"><b>This screen failed to load</b>' +
+      '<div style="text-align:left;font-family:ui-monospace,monospace;font-size:12px;' +
+      'margin-top:12px;padding:12px;border-radius:10px;background:rgba(229,72,77,.12);' +
+      'color:#E5484D;word-break:break-word">' + String(msg) +
+      (where ? '<br><br>' + where : '') + '</div></div>';
+  }
+  window.addEventListener('error', function (e) {
+    fatal(e.message, (e.filename || '') + (e.lineno ? ':' + e.lineno : ''));
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    fatal((e.reason && e.reason.message) || e.reason, 'unhandled promise');
+  });
+})();
+</script>
+</head>
+<body>
+<div class="wrap" id="view"></div>
+
+<script type="module">
+/* Standalone on purpose: this page shares no code with the admin panel.
+   Importing tg.js would pull in the shared session store, and a maker token
+   landing in the same slot as an admin one is exactly the confusion the
+   separate token namespace exists to prevent. */
+
+const view = document.getElementById('view');
+const html = (s) => { view.innerHTML = s; };
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
+  (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const on = (sel, ev, fn) => view.querySelector(sel)?.addEventListener(ev, fn);
+const loading = () => html('<div class="skeleton"></div>'.repeat(3));
+
+const TOKEN = 'makerSession';
+const session = {
+  get: () => localStorage.getItem(TOKEN) || '',
+  set: (v) => localStorage.setItem(TOKEN, v),
+  clear: () => localStorage.removeItem(TOKEN),
+};
+
+let toastTimer;
+function toast(msg, kind) {
+  let el = document.getElementById('toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'toast';
+    el.className = 'toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.toggle('err', kind === 'err');
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(`/api/maker${path}`, {
+    method: opts.method || 'GET',
+    headers: { 'Content-Type': 'application/json', 'X-Session': session.get() },
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  let data = null;
+  try { data = await res.json(); } catch (_) {}
+  // A dead session must drop straight back to the sign-in form. Showing the
+  // error inline would leave a signed-out maker staring at a broken queue with
+  // no way to fix it.
+  if (res.status === 401) { session.clear(); signIn(); throw new Error('Signed out'); }
+  if (!res.ok) throw new Error((data && data.error) || `Error ${res.status}`);
+  return data;
+}
+
+const STAGE = {
+  awaiting_number: ['Waiting for number', 'wait'],
+  awaiting_otp: ['Waiting for OTP', 'wait'],
+  working: ['Your turn', 'ok'],
+  done: ['Complete', 'ok'],
+  cancelled: ['Cancelled', 'bad'],
+};
+
+function signIn(msg) {
+  html(`
+    <h1>Fulfilment</h1>
+    <p class="sub">${msg ? esc(msg) : 'Sign in to see the orders assigned to you.'}</p>
+    <label>Email</label>
+    <input id="em" type="email" autocomplete="username" inputmode="email">
+    <label style="margin-top:10px">Password</label>
+    <input id="pw" type="password" autocomplete="current-password">
+    <button id="go" style="margin-top:14px">Sign in</button>`);
+
+  const submit = async () => {
+    const email = view.querySelector('#em').value.trim();
+    const password = view.querySelector('#pw').value;
+    if (!email || !password) return toast('Email and password, please', 'err');
+    const b = view.querySelector('#go');
+    b.disabled = true;
+    try {
+      const res = await fetch('/api/maker/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Sign in failed');
+      session.set(d.session);
+      queue();
+    } catch (err) {
+      b.disabled = false;
+      view.querySelector('#pw').value = '';
+      toast(err.message, 'err');
+    }
+  };
+  on('#go', 'click', submit);
+  on('#pw', 'keydown', (e) => { if (e.key === 'Enter') submit(); });
+}
+
+async function queue(closed = false) {
+  loading();
+  let me, d;
+  try {
+    [me, d] = await Promise.all([api('/me'), api(`/orders${closed ? '?closed=1' : ''}`)]);
+  } catch (_) { return; }
+  const list = d.items || [];
+  html(`
+    <h1>${esc(me.shop || 'Fulfilment')}</h1>
+    <p class="sub">Signed in as ${esc(me.name)}</p>
+    <div class="row" style="gap:8px;margin:12px 0">
+      <button class="mini ${closed ? 'ghost' : ''}" id="tab_open">Open</button>
+      <button class="mini ${closed ? '' : 'ghost'}" id="tab_done">Finished</button>
+      <button class="ghost mini" id="refresh" style="width:auto">🔄</button>
+    </div>
+    ${list.length ? list.map((f) => {
+      const [label, tone] = STAGE[f.stage] || [f.stage, ''];
+      return `
+      <div class="card" data-o="${f.order_id}" role="button" tabindex="0">
+        <div class="between">
+          <div class="grow trunc"><b>#${esc(f.code || f.order_id)}</b>
+            <span class="muted small">${esc(f.product_name || '')}</span></div>
+          <span class="pill ${tone}">${label}</span>
+        </div>
+        <div class="between small muted" style="margin-top:6px">
+          <span class="num">${f.number ? esc(f.number) : 'no number yet'}</span>
+          ${f.unread ? `<span class="pill bad">${f.unread} new</span>` : ''}
+        </div>
+      </div>`; }).join('')
+      : `<div class="empty"><b>Nothing here</b>${closed
+          ? 'No finished orders yet.'
+          : 'No orders waiting. New ones appear here automatically.'}</div>`}
+    <button class="ghost mini" id="out" style="margin-top:18px;width:auto">Sign out</button>`);
+
+  on('#tab_open', 'click', () => queue(false));
+  on('#tab_done', 'click', () => queue(true));
+  on('#refresh', 'click', () => queue(closed));
+  on('#out', 'click', () => { session.clear(); signIn('Signed out.'); });
+  view.querySelectorAll('[data-o]').forEach((el) =>
+    el.onclick = () => thread(Number(el.dataset.o), closed));
+}
+
+async function thread(oid, cameFromClosed) {
+  loading();
+  let d;
+  try { d = await api(`/fulfil/${oid}`); } catch (_) { return; }
+  let draft = '';
+
+  const paint = () => {
+    const f = d.fulfilment, o = d.order;
+    const [label, tone] = STAGE[f.stage] || [f.stage, ''];
+    const open = !['done', 'cancelled'].includes(f.stage);
+    html(`
+      <button class="ghost mini" id="back" style="width:auto">← Orders</button>
+      <h1 style="margin-top:10px">#${esc(o.code)}</h1>
+      <p class="sub">${esc(o.product_name)} × ${o.qty}
+        · <span class="pill ${tone}">${label}</span></p>
+
+      <div class="card">
+        <div class="between"><span class="muted small">Number to activate</span>
+          <b class="num">${f.number ? esc(f.number) : '—'}</b></div>
+      </div>
+
+      <div class="row between" style="margin-top:14px">
+        <span class="sub" style="margin:0">Conversation with the buyer</span>
+        <button class="ghost mini" id="reload" style="width:auto">🔄 Refresh</button>
+      </div>
+      <div id="thread" class="wallet" style="margin-top:6px">
+        ${(d.messages || []).map((m) => `
+          <div class="small" style="margin:6px 0;white-space:pre-wrap;${
+            m.sender === 'system' ? 'font-style:italic;opacity:.6'
+            : m.sender === 'admin' ? 'text-align:right' : ''}">${
+            m.sender === 'user' ? '👤 ' : m.sender === 'admin' ? '🛠 ' : ''
+            }${esc(m.body)}</div>`).join('') || '<p class="sub">No messages yet.</p>'}
+      </div>
+
+      ${open ? `
+        <label style="margin-top:14px">Message the buyer</label>
+        <div class="row"><input id="msg" placeholder="Type a reply…">
+          <button class="mini" id="send">Send</button></div>
+        <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
+          <button class="ghost mini" id="otp">🔑 Request OTP</button>
+          <button class="ghost mini" id="done">✅ Mark complete</button>
+        </div>
+        <p class="sub" style="margin-top:12px">Can't activate it? Say so in the
+          chat and the shop owner will handle the refund.</p>`
+      : `<p class="sub" style="margin-top:14px">This order is closed.</p>`}`);
+
+    const t = view.querySelector('#thread');
+    if (t) t.scrollTop = t.scrollHeight;
+    const box = view.querySelector('#msg');
+    if (box && draft) box.value = draft;
+
+    const act = async (bodyObj, okMsg) => {
+      try {
+        d = await api(`/fulfil/${oid}`, { method: 'POST', body: bodyObj });
+        if (bodyObj.action === 'send') draft = '';
+        toast(okMsg);
+        paint();
+      } catch (e) { toast(e.message || 'Failed', 'err'); }
+    };
+
+    on('#back', 'click', () => queue(cameFromClosed));
+    on('#reload', 'click', async () => {
+      const el = view.querySelector('#msg');
+      draft = el ? el.value : draft;
+      try { d = await api(`/fulfil/${oid}`); paint(); toast('Up to date'); }
+      catch (e) { toast(e.message || 'Could not refresh', 'err'); }
+    });
+    on('#send', 'click', () => {
+      const el = view.querySelector('#msg');
+      const text = el.value.trim();
+      if (!text) return toast('Write a message', 'err');
+      act({ action: 'send', text }, 'Sent');
+    });
+    on('#msg', 'keydown', (e) => { if (e.key === 'Enter') view.querySelector('#send').click(); });
+    on('#otp', 'click', () => act({ action: 'ask_otp' }, 'Asked for the OTP'));
+    on('#done', 'click', () => {
+      if (!confirm('Mark this order complete?\n\nThe buyer is told it is activated.')) return;
+      act({ action: 'complete' }, 'Order completed');
+    });
+  };
+  paint();
+}
+
+if (session.get()) queue(); else signIn();
+</script>
+</body>
+</html>

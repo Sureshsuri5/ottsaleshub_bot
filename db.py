@@ -96,6 +96,19 @@ CREATE TABLE IF NOT EXISTS admin_logins (
     last_login TEXT
 );
 
+-- Outside suppliers who fulfil manual orders. Deliberately not rows in
+-- admin_logins with a flag: a maker is a different kind of account, and a
+-- shared table is one stray query away from a supplier reading the shop.
+CREATE TABLE IF NOT EXISTS makers (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    email      TEXT    NOT NULL UNIQUE,
+    pw_hash    TEXT    NOT NULL,
+    name       TEXT    NOT NULL DEFAULT '',
+    is_active  INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    last_login TEXT
+);
+
 CREATE TABLE IF NOT EXISTS bank_sms (
     utr        TEXT PRIMARY KEY,
     amount     REAL NOT NULL,
@@ -456,6 +469,11 @@ async def _migrate() -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_code ON orders(code)",
         # manual=1 -> no stock line exists; an operator activates it by hand
         "ALTER TABLE products ADD COLUMN manual INTEGER NOT NULL DEFAULT 0",
+        # which supplier fulfils this product, and which one owns a given order
+        "ALTER TABLE products ADD COLUMN maker_id INTEGER",
+        # snapshotted onto the order: reassigning a product later must not move
+        # orders a maker is already part-way through, nor hide finished ones
+        "ALTER TABLE fulfilment ADD COLUMN maker_id INTEGER",
     ):
         try:
             await ex(stmt)
@@ -1743,6 +1761,71 @@ async def fulfil_scrub(oid: int) -> int:
             await ex("UPDATE fulfil_msgs SET body = ? WHERE id = ?", (new, r["id"]))
             n += 1
     return n
+
+
+# ------------------------------------------------------------------- makers
+
+async def maker_by_email(email: str):
+    return await q1("SELECT * FROM makers WHERE LOWER(email) = LOWER(?)",
+                    (email.strip().lower(),))
+
+
+async def maker(mid: int):
+    return await q1("SELECT * FROM makers WHERE id = ?", (mid,))
+
+
+async def makers_list():
+    return await q("SELECT id, email, name, is_active, created_at, last_login "
+                   "FROM makers ORDER BY name, email")
+
+
+async def add_maker(email: str, pw_hash: str, name: str) -> int:
+    await ex("INSERT INTO makers (email, pw_hash, name) VALUES (?, ?, ?)",
+             (email.strip().lower(), pw_hash, name.strip()[:80]))
+    row = await maker_by_email(email)
+    return int(row["id"]) if row else 0
+
+
+async def set_maker_active(mid: int, active: bool) -> None:
+    await ex("UPDATE makers SET is_active = ? WHERE id = ?",
+             (1 if active else 0, mid))
+
+
+async def set_maker_password(mid: int, pw_hash: str) -> None:
+    await ex("UPDATE makers SET pw_hash = ? WHERE id = ?", (pw_hash, mid))
+
+
+async def drop_maker(mid: int) -> int:
+    """Remove the account. Products pointing at it fall back to unassigned,
+    and orders already in flight keep their snapshot so nothing is orphaned
+    mid-conversation — the admin still sees them in the main queue."""
+    await ex("UPDATE products SET maker_id = NULL WHERE maker_id = ?", (mid,))
+    return await ex_count("DELETE FROM makers WHERE id = ?", (mid,))
+
+
+async def touch_maker_login(mid: int) -> None:
+    await ex("UPDATE makers SET last_login = datetime('now') WHERE id = ?", (mid,))
+
+
+async def maker_queue(mid: int, closed: bool = False, limit: int = 100):
+    """One maker's work list. Scoped by maker_id in the query itself, not
+    filtered after the fact, so there is no version of this that accidentally
+    returns another supplier's orders."""
+    marks = ",".join("?" * len(OPEN_STAGES))
+    where = (f"f.stage NOT IN ({marks})" if closed else f"f.stage IN ({marks})")
+    return await q(
+        "SELECT f.order_id, f.stage, f.number, f.note, f.unread, f.updated_at, "
+        "       o.code, o.product_name, o.qty "
+        "FROM fulfilment f JOIN orders o ON o.id = f.order_id "
+        f"WHERE f.maker_id = ? AND {where} "
+        "ORDER BY f.unread DESC, f.updated_at ASC LIMIT ?",
+        (mid, *OPEN_STAGES, limit))
+
+
+async def maker_owns(mid: int, oid: int) -> bool:
+    r = await q1("SELECT 1 AS ok FROM fulfilment WHERE order_id = ? AND maker_id = ?",
+                 (oid, mid))
+    return bool(r)
 
 
 async def top_referrers(limit: int = 100, offset: int = 0):

@@ -367,6 +367,13 @@ function productView(pid) {
         <input type="checkbox" id="manual" ${p.manual ? 'checked' : ''}>
       </label>
 
+      ${p.manual ? `
+        <label style="margin-top:14px">Fulfilled by</label>
+        <select id="mksel"><option value="">You (nobody assigned)</option></select>
+        <div class="hint">The maker sees this product's orders in their own
+          panel. Changing it only affects new orders.</div>
+      ` : ''}
+
       <h2>Stock</h2>
       ${p.manual ? `
         <p class="sub">This product is activated by hand, so it has no stock.
@@ -398,6 +405,28 @@ function productView(pid) {
         <div id="stocklist" class="wallet"><p class="sub">Loading…</p></div>`}
 
       <button class="danger" id="del" style="margin-top:22px">Delete product</button>`);
+
+    if (p.manual) {
+      // filled after render: the list is a second request, and blocking the
+      // whole product screen on it would stall the common case where nobody
+      // is looking at the assignment at all
+      api('/admin/makers').then((r) => {
+        const sel = view.querySelector('#mksel');
+        if (!sel) return;
+        (r.makers || []).filter((m) => m.is_active).forEach((m) => {
+          const o = document.createElement('option');
+          o.value = m.id;
+          o.textContent = m.name || m.email;
+          if (Number(p.maker_id) === Number(m.id)) o.selected = true;
+          sel.appendChild(o);
+        });
+        sel.onchange = async () => {
+          await api(`/admin/product/${pid}`, { method: 'PATCH',
+            body: { maker_id: sel.value ? Number(sel.value) : null } });
+          toast(sel.value ? 'Assigned' : 'Unassigned');
+        };
+      }).catch(() => {});
+    }
 
     on('#manual', 'change', async (e) => {
       await api(`/admin/product/${pid}`, { method: 'PATCH',
@@ -1196,6 +1225,18 @@ function moreView() {
         be swept.</p>
       <button id="walletbtn" class="ghost">Open deposit wallet →</button>
 
+      <h2>Makers</h2>
+      <p class="sub">Suppliers who fulfil manual orders. They sign in at
+        <code>/maker</code> and only ever see orders for products assigned to
+        them — never your buyers, catalogue or takings.</p>
+      <div id="makerlist" class="wallet"><p class="sub">Loading…</p></div>
+      <label style="margin-top:12px">Add a maker</label>
+      <input id="mk_name" placeholder="Name (e.g. Ravi — Jio activations)">
+      <input id="mk_email" type="email" placeholder="Email" style="margin-top:8px">
+      <input id="mk_pw" type="password" placeholder="Password (8+ characters)"
+             style="margin-top:8px">
+      <button class="ghost" id="mk_add" style="margin-top:8px">Create maker</button>
+
       <h2>Broadcast</h2>
       <p class="sub">Sent as a private message to everyone who isn't banned, one
         at a time. HTML works. Use <code>{name}</code> for their first name and
@@ -1374,6 +1415,65 @@ function moreView() {
       location.replace(location.pathname);      // drop any ?token= too
     });
     on('#walletbtn', 'click', () => { haptic(); walletView(); });
+    const paintMakers = (rows) => {
+      const el = view.querySelector('#makerlist');
+      if (!el) return;
+      el.innerHTML = rows.length ? rows.map((m) => `
+        <div class="between" style="padding:8px 0">
+          <div class="grow trunc">
+            <b>${esc(m.name || m.email)}</b>
+            <div class="small muted trunc">${esc(m.email)}
+              ${m.last_login ? '· last in ' + esc(String(m.last_login).slice(0, 10))
+                             : '· never signed in'}</div>
+          </div>
+          <div class="row" style="gap:6px">
+            <span class="pill ${m.is_active ? 'ok' : 'bad'}">
+              ${m.is_active ? 'Active' : 'Off'}</span>
+            <button class="ghost mini" data-mk-t="${m.id}" data-on="${m.is_active ? 1 : 0}"
+                    style="width:auto">${m.is_active ? 'Disable' : 'Enable'}</button>
+            <button class="ghost mini danger-text" data-mk-d="${m.id}"
+                    style="width:auto">Delete</button>
+          </div>
+        </div>`).join('')
+        : '<p class="sub">No makers yet.</p>';
+
+      el.querySelectorAll('[data-mk-t]').forEach((b) => b.onclick = async () => {
+        const r = await api('/admin/makers', { method: 'POST', body: {
+          action: 'active', id: Number(b.dataset.mkT), active: b.dataset.on !== '1' } });
+        toast('Updated'); paintMakers(r.makers);
+      });
+      el.querySelectorAll('[data-mk-d]').forEach((b) => b.onclick = () => confirmDelete(
+        'Delete this maker?',
+        'They lose access immediately. Products assigned to them become unassigned, '
+        + 'and orders already in flight stay in your own Manual queue.',
+        async () => {
+          const r = await api('/admin/makers', { method: 'POST', body: {
+            action: 'delete', id: Number(b.dataset.mkD) } });
+          toast('Maker removed'); paintMakers(r.makers);
+        }));
+    };
+    api('/admin/makers').then((r) => paintMakers(r.makers)).catch(() => {});
+
+    on('#mk_add', 'click', async () => {
+      const name = view.querySelector('#mk_name').value.trim();
+      const email = view.querySelector('#mk_email').value.trim();
+      const password = view.querySelector('#mk_pw').value;
+      if (!email || password.length < 8) {
+        return toast('Email, and a password of 8+ characters', 'err');
+      }
+      try {
+        const r = await api('/admin/makers',
+                            { method: 'POST', body: { action: 'add', name, email, password } });
+        // clear the password immediately — it is the one field that must not
+        // sit on screen after use
+        view.querySelector('#mk_pw').value = '';
+        view.querySelector('#mk_name').value = '';
+        view.querySelector('#mk_email').value = '';
+        toast('Maker created');
+        paintMakers(r.makers);
+      } catch (err) { toast(err.message, 'err'); }
+    });
+
     on('#preview', 'click', async () => {
       const text = view.querySelector('#bc').value.trim();
       if (!text) return toast('Write the message first', 'err');

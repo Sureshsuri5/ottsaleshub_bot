@@ -309,6 +309,12 @@ async def start_fulfilment(bot: Bot, oid: int, p) -> bool:
     """Payment confirmed on a manual product: open the thread, ask for the number."""
     o = await db.order(oid)
     await db.open_fulfilment(oid, o["user_id"])
+    # Snapshot the supplier now. Reading it from the product at display time
+    # would silently move every past order the day the product is reassigned,
+    # including ones another maker is mid-conversation on.
+    mid = p["maker_id"] if "maker_id" in p.keys() else None
+    if mid:
+        await db.set_fulfil(oid, maker_id=int(mid))
     # cost is snapshotted now, same as an automatic delivery, so profit history
     # stays true if the cost price is edited while the order is still open
     await db.set_order(oid, status="fulfilling",
