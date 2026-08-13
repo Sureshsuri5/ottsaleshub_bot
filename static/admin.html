@@ -769,7 +769,25 @@ function orderView(id) {
       ${!o.items.length ? '<p class="sub">Nothing delivered for this order.</p>' : `
         <div class="wcard">${o.items.map((it, i) =>
           `<div class="waddr">${i + 1}. ${esc(it)}</div>`).join('')}</div>`}
+
+      <h2>Danger zone</h2>
+      <p class="sub">Deleting removes this order from every figure — profit,
+        revenue, units sold. Any stock it used goes back on the shelf. Wallet
+        balances are left alone. Meant for test orders.</p>
+      <button class="ghost danger-text" id="delorder">🗑 Delete this order</button>
     `);
+
+    on('#delorder', 'click', () => confirmDelete(
+      'Delete this order permanently?',
+      'It disappears from profit and sales figures, and any stock it consumed '
+      + 'is released. This cannot be undone.',
+      async () => {
+        const r = await api('/admin/order?id=' + encodeURIComponent(id),
+                            { method: 'DELETE' });
+        toast(r.stock_freed ? `Deleted — ${r.stock_freed} item(s) back in stock`
+                            : 'Order deleted');
+        ordersView();
+      }));
   });
 }
 

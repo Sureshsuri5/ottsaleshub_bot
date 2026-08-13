@@ -832,6 +832,21 @@ async def adm_withdrawals(request):
     return web.json_response({"pending": out})
 
 
+async def adm_order_delete(request):
+    """Remove an order permanently, undoing its stock and sold-count effects."""
+    try:
+        oid = int(request.query.get("id", "0") or (await body(request)).get("id", 0))
+    except (TypeError, ValueError):
+        return web.json_response({"error": "Which order?"}, status=400)
+    if not oid:
+        return web.json_response({"error": "Which order?"}, status=400)
+    res = await db.delete_order(oid)
+    if not res.get("deleted"):
+        return web.json_response({"error": "No such order."}, status=404)
+    log.info("order %s deleted by admin %s (was %s)", oid, request["uid"], res["was"])
+    return web.json_response(res)
+
+
 async def adm_order(request):
     """Everything about one order, including what was delivered.
 
@@ -1886,6 +1901,7 @@ def build_app(bot: Bot) -> web.Application:
     r.add_post("/api/admin/withdrawals", adm_withdrawals)
     r.add_post("/api/terms", api_terms_accept)
     r.add_get("/api/admin/order", adm_order)
+    r.add_delete("/api/admin/order", adm_order_delete)
     r.add_get("/api/admin/profit", adm_profit)
     r.add_get("/api/admin/dashboard", adm_dashboard)
     r.add_get("/api/admin/wallet", adm_wallet)

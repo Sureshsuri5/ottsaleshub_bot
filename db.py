@@ -1923,6 +1923,49 @@ async def user_price_rows(uid: int):
         "WHERE up.user_id = ? ORDER BY p.name", (uid,))
 
 
+async def delete_order(oid: int) -> dict:
+    """Remove an order and undo its side effects. Returns what was reversed.
+
+    Deleting the row alone would leave the shop quietly wrong: the stock lines
+    it consumed stay marked sold and can never be delivered to anyone, and the
+    product's sold_count keeps counting a sale that no longer exists. Both are
+    unwound here.
+
+    Wallet balance is deliberately *not* touched. Money paid, refunded or
+    credited has already moved and may have been spent since; silently clawing
+    it back on a delete would be worse than an inflated figure. Adjust the
+    balance by hand if a test order needs that too.
+    """
+    o = await q1("SELECT * FROM orders WHERE id = ?", (oid,))
+    if not o:
+        return {"deleted": False}
+
+    freed = 0
+    if o["status"] == "delivered" and o["kind"] == "purchase":
+        # release the keys back onto the shelf
+        freed = await ex_count(
+            "UPDATE stock SET is_sold = 0, order_id = NULL WHERE order_id = ?",
+            (oid,))
+        if o["product_id"]:
+            await ex("UPDATE products SET sold_count = "
+                     "CASE WHEN sold_count >= ? THEN sold_count - ? ELSE 0 END "
+                     "WHERE id = ?", (o["qty"], o["qty"], o["product_id"]))
+    else:
+        # not delivered, but stock may still be reserved against it
+        freed = await ex_count(
+            "UPDATE stock SET is_sold = 0, order_id = NULL WHERE order_id = ?",
+            (oid,))
+
+    # the fulfilment thread, if this was a manual order. Explicit rather than
+    # relying on ON DELETE CASCADE: SQLite only enforces it when foreign keys
+    # are switched on, and a stranded transcript would outlive its order.
+    await ex("DELETE FROM fulfil_msgs WHERE order_id = ?", (oid,))
+    await ex("DELETE FROM fulfilment WHERE order_id = ?", (oid,))
+    await ex("DELETE FROM orders WHERE id = ?", (oid,))
+    return {"deleted": True, "stock_freed": freed,
+            "was": o["status"], "amount": float(o["amount"] or 0)}
+
+
 async def top_referrers(limit: int = 100, offset: int = 0):
     """Everyone who has invited at least one person, busiest first.
 
