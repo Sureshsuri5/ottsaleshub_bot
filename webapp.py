@@ -709,7 +709,7 @@ async def adm_product_create(request):
 
 ALLOWED_FIELDS = {"name", "description", "price", "is_active", "infinite", "static_payload",
                   "category_id", "emoji", "icon_emoji_id", "unit", "note", "cost", "manual",
-                  "maker_id"}
+                  "maker_id", "ask_for"}
 
 
 async def adm_product_update(request):
@@ -1063,7 +1063,7 @@ async def maker_thread(request):
                   "product_name": o["product_name"] if o else "",
                   "qty": o["qty"] if o else 1},
         "fulfilment": {"stage": f["stage"], "number": f["number"],
-                       "note": f["note"]},
+                       "note": f["note"], "ask_for": f["ask_for"]},
         "messages": [dict(m) for m in await db.fulfil_thread(oid)]})
 
 
@@ -1107,7 +1107,7 @@ async def maker_action(request):
                   "product_name": o["product_name"] if o else "",
                   "qty": o["qty"] if o else 1},
         "fulfilment": {"stage": f["stage"], "number": f["number"],
-                       "note": f["note"]} if f else None,
+                       "note": f["note"], "ask_for": f["ask_for"]} if f else None,
         "messages": [dict(m) for m in await db.fulfil_thread(oid)]})
 
 

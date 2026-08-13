@@ -147,6 +147,24 @@ MESSAGES: dict[str, Msg] = {
         "We're activating it now. Stay in this chat: if the provider sends you "
         "a code, we'll ask for it here.",
         "Manual order: number received", "Fulfilment", ("oid",)),
+    "fulfil_ask_email": Msg(
+        "{{m_card}} <b>Order #{oid} — activation needed</b>\n\n"
+        "{product} × {qty} is activated by our team on your account.\n\n"
+        "<b>Reply with the email address to activate.</b>\n"
+        "Send just the address, e.g. <code>you@gmail.com</code>.\n\n"
+        "<i>Just type it in this chat — we reply here too.</i>",
+        "Manual order: ask for the email", "Fulfilment",
+        ("oid", "product", "qty")),
+    "fulfil_got_email": Msg(
+        "{{m_ok}} <b>Got it — order #{oid}</b>\n\n"
+        "We're activating it now. Stay in this chat: if a confirmation code is "
+        "sent to that address, we'll ask you for it here.",
+        "Manual order: email received", "Fulfilment", ("oid",)),
+    "fulfil_nudge_email": Msg(
+        "{{m_box}} <b>Still waiting — order #{oid}</b>\n\n"
+        "We need the email address to activate before we can continue. "
+        "Reply here whenever you're ready.",
+        "Manual order: reminder for the email", "Fulfilment", ("oid",)),
     "fulfil_ask_otp": Msg(
         "{{m_card}} <b>Order #{oid} — code needed</b>\n\n"
         "A one-time code has been sent to your number. "

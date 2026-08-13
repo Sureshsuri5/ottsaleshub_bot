@@ -368,6 +368,16 @@ function productView(pid) {
       </label>
 
       ${p.manual ? `
+        <label style="margin-top:14px">Ask the buyer for</label>
+        <select id="askfor">
+          <option value="number" ${p.ask_for !== 'email' ? 'selected' : ''}>
+            Phone number</option>
+          <option value="email" ${p.ask_for === 'email' ? 'selected' : ''}>
+            Email address</option>
+        </select>
+        <div class="hint">What the buyer is asked for after paying. Only
+          affects new orders.</div>
+
         <label style="margin-top:14px">Fulfilled by</label>
         <select id="mksel"><option value="">You (nobody assigned)</option></select>
         <div class="hint">The maker sees this product's orders in their own
@@ -407,6 +417,12 @@ function productView(pid) {
       <button class="danger" id="del" style="margin-top:22px">Delete product</button>`);
 
     if (p.manual) {
+      on('#askfor', 'change', async (e) => {
+        await api(`/admin/product/${pid}`, { method: 'PATCH',
+                                             body: { ask_for: e.target.value } });
+        toast(e.target.value === 'email' ? 'Will ask for an email'
+                                         : 'Will ask for a phone number');
+      });
       // filled after render: the list is a second request, and blocking the
       // whole product screen on it would stall the common case where nobody
       // is looking at the assignment at all
@@ -880,7 +896,8 @@ function threadView(oid) {
           <div class="between"><span class="muted small">Buyer</span>
             <span class="trunc">${esc((d.user && d.user.first_name) || 'Unnamed')}
               ${d.user && d.user.username ? '@' + esc(d.user.username) : ''}</span></div>
-          <div class="between" style="margin-top:10px"><span class="muted small">Number</span>
+          <div class="between" style="margin-top:10px"><span class="muted small">${
+            f.ask_for === 'email' ? 'Email' : 'Number'}</span>
             <b class="num">${f.number ? esc(f.number) : '—'}</b></div>
         </div>
 

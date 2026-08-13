@@ -343,15 +343,23 @@ async def _start_fulfilment(bot: Bot, oid: int, p) -> bool:
     # stays true if the cost price is edited while the order is still open
     await db.set_order(oid, status="fulfilling",
                        unit_cost=float(p["cost"] or 0) if "cost" in p.keys() else 0)
+    # Snapshot what to ask for, same reasoning as the maker above: switching
+    # the product from number to email later must not relabel an order that is
+    # already part-way through its conversation.
+    ask = (p["ask_for"] if "ask_for" in p.keys() else "number") or "number"
+    if ask == "email":
+        await db.set_fulfil(oid, ask_for="email")
+    want = "email" if ask == "email" else "number"
     code = o["code"] or oid
     await db.fulfil_say(oid, "system",
-                        f"Paid — {p['name']} × {o['qty']}. Waiting for the number.")
+                        f"Paid — {p['name']} × {o['qty']}. Waiting for the {want}.")
     await _safe(bot, o["user_id"],
-                await texts.t("fulfil_ask_number", oid=code,
+                await texts.t("fulfil_ask_email" if ask == "email"
+                              else "fulfil_ask_number", oid=code,
                               product=_esc(p["name"]), qty=o["qty"]))
     await notify_admins(
         bot, f"🛠 Manual order <b>#{code}</b> — {_esc(p['name'])} × {o['qty']}\n"
-             f"Waiting on the buyer's number. Work it in the admin panel.",
+             f"Waiting on the buyer's {want}. Work it in the admin panel.",
         skip=o["user_id"])
     return True
 
@@ -387,6 +395,19 @@ def looks_like_number(text: str) -> bool:
     return d.isdigit() and 7 <= len(d) <= 15
 
 
+def looks_like_email(text: str) -> bool:
+    """Whether a buyer message is an email address and nothing else.
+
+    Same strictness as the number check: the whole message has to be the
+    address. Deliberately a loose pattern rather than a strict RFC one — the
+    goal is to catch "hi" and "wait a sec", not to adjudicate exotic but valid
+    addresses. An operator can see a malformed address and ask again; a buyer
+    told their real address was invalid has no way forward.
+    """
+    t = (text or "").strip()
+    return bool(re.fullmatch(r"[^@\s]+@[^@\s.]+\.[^@\s]+", t)) and len(t) <= 254
+
+
 async def fulfil_from_user(bot: Bot, uid: int, text: str) -> bool:
     """A buyer message that belongs to an open manual order. False if none."""
     f = await db.active_fulfilment(uid)
@@ -398,20 +419,25 @@ async def fulfil_from_user(bot: Bot, uid: int, text: str) -> bool:
     await db.fulfil_say(oid, "user", text)
 
     if f["stage"] == "awaiting_number":
-        if not looks_like_number(text):
+        wants_email = (f["ask_for"] if "ask_for" in f.keys() else "number") == "email"
+        ok = looks_like_email(text) if wants_email else looks_like_number(text)
+        if not ok:
             # Chatter while we wait. Pass it to the operator, stay put, and say
-            # nothing that implies we got the number — the buyer would think
+            # nothing that implies we got the detail — the buyer would think
             # they were done.
             await notify_admins(bot, f"💬 <b>#{code}</b> buyer replied "
-                                     f"(still no number).", skip=uid)
+                                     f"(still no {'email' if wants_email else 'number'}).",
+                                skip=uid)
             return True
-        # First real number is the activation number. Captured onto the row
-        # rather than left in the transcript so the panel can show it beside
-        # the order without an operator scrolling the chat for it every time.
-        await db.set_fulfil(oid, number=text.strip()[:64], stage="working", nudged=0)
-        await _safe(bot, uid, await texts.t("fulfil_got_number", oid=code))
-        await notify_admins(bot, f"🔢 <b>#{code}</b> number received — activate it.",
-                            skip=uid)
+        # First real answer is what the operator activates against. Captured
+        # onto the row rather than left in the transcript so the panel can show
+        # it beside the order without scrolling the chat for it every time.
+        await db.set_fulfil(oid, number=text.strip()[:254], stage="working", nudged=0)
+        await _safe(bot, uid, await texts.t(
+            "fulfil_got_email" if wants_email else "fulfil_got_number", oid=code))
+        await notify_admins(
+            bot, f"🔢 <b>#{code}</b> {'email' if wants_email else 'number'} "
+                 f"received — activate it.", skip=uid)
     else:
         if f["stage"] == "awaiting_otp":
             if not looks_like_otp(text):
@@ -514,8 +540,11 @@ async def nudge_fulfilments(bot: Bot) -> None:
         if not o or o["status"] != "fulfilling":
             continue
         code = o["code"] or oid
-        kind = "fulfil_nudge_number" if f["stage"] == "awaiting_number" \
-            else "fulfil_nudge_otp"
+        wants_email = (f["ask_for"] if "ask_for" in f.keys() else "number") == "email"
+        if f["stage"] == "awaiting_number":
+            kind = "fulfil_nudge_email" if wants_email else "fulfil_nudge_number"
+        else:
+            kind = "fulfil_nudge_otp"
         try:
             await _safe(bot, f["user_id"], await texts.t(kind, oid=code))
             await db.ex("UPDATE fulfilment SET nudged = nudged + 1 WHERE order_id = ?",

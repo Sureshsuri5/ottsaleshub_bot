@@ -492,6 +492,11 @@ async def _migrate() -> None:
         # we observed. Both are needed — see maker_status() for why.
         "ALTER TABLE makers ADD COLUMN is_online INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE makers ADD COLUMN last_seen TEXT",
+        # what a manual product needs from the buyer: 'number' or 'email'
+        "ALTER TABLE products ADD COLUMN ask_for TEXT NOT NULL DEFAULT 'number'",
+        # snapshotted onto the order for the same reason as maker_id: changing
+        # the product later must not relabel a conversation already under way
+        "ALTER TABLE fulfilment ADD COLUMN ask_for TEXT NOT NULL DEFAULT 'number'",
     ):
         try:
             await ex(stmt)

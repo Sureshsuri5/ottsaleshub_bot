@@ -211,7 +211,8 @@ async function thread(oid, cameFromClosed) {
         · <span class="pill ${tone}">${label}</span></p>
 
       <div class="card">
-        <div class="between"><span class="muted small">Number to activate</span>
+        <div class="between"><span class="muted small">${
+          f.ask_for === 'email' ? 'Email to activate' : 'Number to activate'}</span>
           <b class="num">${f.number ? esc(f.number) : '—'}</b></div>
       </div>
 
