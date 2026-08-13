@@ -378,6 +378,14 @@ function productView(pid) {
         <div class="hint">What the buyer is asked for after paying. Only
           affects new orders.</div>
 
+        <label class="tog" style="margin-top:14px">
+          <span><b>Needs a code</b>
+            <div class="hint">Turn off if you can activate from the
+              ${p.ask_for === 'email' ? 'email' : 'number'} alone. The buyer
+              won't be told to expect a code.</div></span>
+          <input type="checkbox" id="needsotp" ${p.needs_otp !== 0 ? 'checked' : ''}>
+        </label>
+
         <label style="margin-top:14px">Fulfilled by</label>
         <select id="mksel"><option value="">You (nobody assigned)</option></select>
         <div class="hint">The maker sees this product's orders in their own
@@ -417,6 +425,12 @@ function productView(pid) {
       <button class="danger" id="del" style="margin-top:22px">Delete product</button>`);
 
     if (p.manual) {
+      on('#needsotp', 'change', async (e) => {
+        await api(`/admin/product/${pid}`, { method: 'PATCH',
+          body: { needs_otp: e.target.checked ? 1 : 0 } });
+        toast(e.target.checked ? 'Will ask for a code' : 'No code needed');
+        refresh();
+      });
       on('#askfor', 'change', async (e) => {
         await api(`/admin/product/${pid}`, { method: 'PATCH',
                                              body: { ask_for: e.target.value } });
@@ -924,7 +938,8 @@ function threadView(oid) {
           <div class="row"><input id="msg" placeholder="Type a reply…">
             <button class="mini" id="send">Send</button></div>
           <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
-            <button class="ghost mini" id="otp">🔑 Request OTP</button>
+            ${f.needs_otp === false ? '' :
+              '<button class="ghost mini" id="otp">🔑 Request OTP</button>'}
             <button class="ghost mini" id="done">✅ Mark complete</button>
             <button class="ghost mini danger-text" id="cancel">↩ Cancel & refund</button>
           </div>`

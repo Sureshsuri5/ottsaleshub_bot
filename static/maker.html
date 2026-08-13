@@ -234,7 +234,8 @@ async function thread(oid, cameFromClosed) {
           <button class="mini" id="send">Send</button>
           <button class="ghost mini" id="reload" style="width:auto">🔄</button></div>
         <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
-          <button class="ghost mini" id="otp">🔑 Request OTP</button>
+          ${f.needs_otp === false ? '' :
+            '<button class="ghost mini" id="otp">🔑 Request OTP</button>'}
           <button class="ghost mini" id="done">✅ Mark complete</button>
         </div>
         <p class="sub" style="margin-top:12px">Can't activate it? Say so in the

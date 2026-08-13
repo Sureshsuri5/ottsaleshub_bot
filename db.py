@@ -497,6 +497,9 @@ async def _migrate() -> None:
         # snapshotted onto the order for the same reason as maker_id: changing
         # the product later must not relabel a conversation already under way
         "ALTER TABLE fulfilment ADD COLUMN ask_for TEXT NOT NULL DEFAULT 'number'",
+        # some activations need only the address or number — no code round trip
+        "ALTER TABLE products ADD COLUMN needs_otp INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE fulfilment ADD COLUMN needs_otp INTEGER NOT NULL DEFAULT 1",
     ):
         try:
             await ex(stmt)

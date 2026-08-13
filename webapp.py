@@ -709,7 +709,7 @@ async def adm_product_create(request):
 
 ALLOWED_FIELDS = {"name", "description", "price", "is_active", "infinite", "static_payload",
                   "category_id", "emoji", "icon_emoji_id", "unit", "note", "cost", "manual",
-                  "maker_id", "ask_for"}
+                  "maker_id", "ask_for", "needs_otp"}
 
 
 async def adm_product_update(request):
@@ -720,7 +720,7 @@ async def adm_product_update(request):
     d = {k: v for k, v in (await body(request)).items() if k in ALLOWED_FIELDS}
     if "price" in d:
         d["price"] = round(float(d["price"]), 2)
-    for flag in ("is_active", "infinite", "manual"):
+    for flag in ("is_active", "infinite", "manual", "needs_otp"):
         if flag in d:
             d[flag] = int(bool(d[flag]))
     await db.update_product(pid, **d)
@@ -1063,7 +1063,8 @@ async def maker_thread(request):
                   "product_name": o["product_name"] if o else "",
                   "qty": o["qty"] if o else 1},
         "fulfilment": {"stage": f["stage"], "number": f["number"],
-                       "note": f["note"], "ask_for": f["ask_for"]},
+                       "note": f["note"], "ask_for": f["ask_for"],
+                       "needs_otp": bool(f["needs_otp"])},
         "messages": [dict(m) for m in await db.fulfil_thread(oid)]})
 
 
@@ -1107,7 +1108,8 @@ async def maker_action(request):
                   "product_name": o["product_name"] if o else "",
                   "qty": o["qty"] if o else 1},
         "fulfilment": {"stage": f["stage"], "number": f["number"],
-                       "note": f["note"], "ask_for": f["ask_for"]} if f else None,
+                       "note": f["note"], "ask_for": f["ask_for"],
+                       "needs_otp": bool(f["needs_otp"])} if f else None,
         "messages": [dict(m) for m in await db.fulfil_thread(oid)]})
 
 

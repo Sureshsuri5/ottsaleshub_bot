@@ -349,6 +349,12 @@ async def _start_fulfilment(bot: Bot, oid: int, p) -> bool:
     ask = (p["ask_for"] if "ask_for" in p.keys() else "number") or "number"
     if ask == "email":
         await db.set_fulfil(oid, ask_for="email")
+    # Whether this activation involves a code at all. Snapshotted for the same
+    # reason as the rest: a product edited mid-order must not change what the
+    # buyer was already promised.
+    otp = bool(p["needs_otp"]) if "needs_otp" in p.keys() else True
+    if not otp:
+        await db.set_fulfil(oid, needs_otp=0)
     want = "email" if ask == "email" else "number"
     code = o["code"] or oid
     await db.fulfil_say(oid, "system",
@@ -433,8 +439,15 @@ async def fulfil_from_user(bot: Bot, uid: int, text: str) -> bool:
         # onto the row rather than left in the transcript so the panel can show
         # it beside the order without scrolling the chat for it every time.
         await db.set_fulfil(oid, number=text.strip()[:254], stage="working", nudged=0)
-        await _safe(bot, uid, await texts.t(
-            "fulfil_got_email" if wants_email else "fulfil_got_number", oid=code))
+        wants_otp = bool(f["needs_otp"]) if "needs_otp" in f.keys() else True
+        if wants_otp:
+            kind = "fulfil_got_email" if wants_email else "fulfil_got_number"
+        else:
+            # No code is coming, so don't tell them to watch for one — a buyer
+            # waiting for a code that never arrives will message asking where
+            # it is, which is work for the operator and worry for them.
+            kind = "fulfil_got_email_only" if wants_email else "fulfil_got_number_only"
+        await _safe(bot, uid, await texts.t(kind, oid=code))
         await notify_admins(
             bot, f"🔢 <b>#{code}</b> {'email' if wants_email else 'number'} "
                  f"received — activate it.", skip=uid)

@@ -165,6 +165,16 @@ MESSAGES: dict[str, Msg] = {
         "We need the email address to activate before we can continue. "
         "Reply here whenever you're ready.",
         "Manual order: reminder for the email", "Fulfilment", ("oid",)),
+    "fulfil_got_number_only": Msg(
+        "{{m_ok}} <b>Got it — order #{oid}</b>\n\n"
+        "We're activating it now. Nothing more is needed from you — "
+        "we'll message you here as soon as it's live.",
+        "Manual order: number received, no code needed", "Fulfilment", ("oid",)),
+    "fulfil_got_email_only": Msg(
+        "{{m_ok}} <b>Got it — order #{oid}</b>\n\n"
+        "We're activating it now. Nothing more is needed from you — "
+        "we'll message you here as soon as it's live.",
+        "Manual order: email received, no code needed", "Fulfilment", ("oid",)),
     "fulfil_ask_otp": Msg(
         "{{m_card}} <b>Order #{oid} — code needed</b>\n\n"
         "A one-time code has been sent to your number. "
