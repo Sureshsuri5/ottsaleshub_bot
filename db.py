@@ -654,27 +654,8 @@ async def delivered_purchases(uid: int) -> int:
     return row["c"] if row else 0
 
 
-async def buyer_ids(promos_only: bool = False) -> list[dict]:
-    """People who have actually bought something, with their names.
-
-    A delivered purchase, not merely an order placed: somebody who opened
-    checkout and walked away is a browser, and a message thanking them for
-    their custom would land badly. Same opt-out and ban rules as the general
-    broadcast — a narrower audience is no reason to ignore either.
-    """
-    sql = ("SELECT DISTINCT u.tg_id, u.first_name, u.username FROM users u "
-           "JOIN orders o ON o.user_id = u.tg_id "
-           "WHERE u.is_banned = 0 AND o.status = 'delivered' "
-           "AND o.kind = 'purchase'")
-    if promos_only:
-        sql += " AND u.notify_promos = 1"
-    return [dict(r) for r in await q(sql)]
-
-
-async def broadcast_targets(audience: str = "all") -> list[dict]:
-    """Resolve an audience name to the rows a broadcast will be sent to."""
-    if audience == "buyers":
-        return await buyer_ids()
+async def broadcast_targets() -> list[dict]:
+    """Everyone a broadcast goes to: not banned, with the names it fills in."""
     rows = await q("SELECT tg_id, first_name, username FROM users "
                    "WHERE is_banned = 0")
     return [dict(r) for r in rows]

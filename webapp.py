@@ -1082,14 +1082,12 @@ async def _run_broadcast(bot, rows: list[dict], text: str, by: int) -> None:
 async def adm_broadcast(request):
     d = await body(request)
     text = str(d.get("text", "")).strip()
-    audience = str(d.get("audience", "all")).strip()
     if not text:
         return web.json_response({"error": "Write the message first."}, status=400)
 
-    rows = await db.broadcast_targets(audience)
+    rows = await db.broadcast_targets()
     if not rows:
-        return web.json_response(
-            {"error": "Nobody in that audience yet."}, status=400)
+        return web.json_response({"error": "Nobody to send to yet."}, status=400)
 
     # a dry run so the panel can show who it would reach, and what one of them
     # will actually see, before anything is sent
@@ -1100,7 +1098,7 @@ async def adm_broadcast(request):
     import asyncio
     asyncio.create_task(_run_broadcast(
         request.app["bot"], rows, text, request["uid"]))
-    return web.json_response({"queued": len(rows), "audience": audience})
+    return web.json_response({"queued": len(rows)})
 
 
 async def adm_texts(request):

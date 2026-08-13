@@ -1197,13 +1197,9 @@ function moreView() {
       <button id="walletbtn" class="ghost">Open deposit wallet →</button>
 
       <h2>Broadcast</h2>
-      <p class="sub">Sent as a private message to each person, one at a time.
-        HTML works. Use <code>{name}</code> for their first name and
+      <p class="sub">Sent as a private message to everyone who isn't banned, one
+        at a time. HTML works. Use <code>{name}</code> for their first name and
         <code>{username}</code> for their @handle.</p>
-      <div class="row" style="gap:8px;margin-bottom:8px">
-        <button class="mini" data-aud="all" id="aud_all">Everyone</button>
-        <button class="mini ghost" data-aud="buyers" id="aud_buyers">Buyers only</button>
-      </div>
       <textarea id="bc" placeholder="Hi {name}, fresh stock just landed — 20% off today."></textarea>
       <div class="row" style="gap:8px;margin-top:8px">
         <button class="ghost mini" id="preview" style="width:auto">Preview</button>
@@ -1378,25 +1374,12 @@ function moreView() {
       location.replace(location.pathname);      // drop any ?token= too
     });
     on('#walletbtn', 'click', () => { haptic(); walletView(); });
-    let audience = 'all';
-    const setAud = (a) => {
-      audience = a;
-      ['all', 'buyers'].forEach((x) => {
-        const b = view.querySelector(`#aud_${x}`);
-        if (b) b.className = `mini${x === a ? '' : ' ghost'}`;
-      });
-      const info = view.querySelector('#bcinfo');
-      if (info) info.textContent = '';
-    };
-    view.querySelectorAll('[data-aud]').forEach((b) =>
-      b.onclick = () => setAud(b.dataset.aud));
-
     on('#preview', 'click', async () => {
       const text = view.querySelector('#bc').value.trim();
       if (!text) return toast('Write the message first', 'err');
       try {
         const r = await api('/admin/broadcast',
-                            { method: 'POST', body: { text, audience, preview: 1 } });
+                            { method: 'POST', body: { text, preview: 1 } });
         view.querySelector('#bcinfo').innerHTML =
           `<b>${r.total}</b> recipient${r.total === 1 ? '' : 's'}. One of them sees:`
           + `<div class="card" style="margin-top:8px;white-space:pre-wrap">${esc(r.sample)}</div>`;
@@ -1406,15 +1389,13 @@ function moreView() {
     on('#send', 'click', (e) => {
       const text = view.querySelector('#bc').value.trim();
       if (!text) return toast('Write the message first', 'err');
-      const who = audience === 'buyers' ? 'every buyer' : 'everyone';
-      confirmDelete(`Send to ${who}?`,
+      confirmDelete('Send to everyone?',
         'Each person gets it as a private message. This cannot be recalled.',
         async () => {
           e.target.disabled = true;
           e.target.textContent = 'Queueing…';
           try {
-            const r = await api('/admin/broadcast',
-                                { method: 'POST', body: { text, audience } });
+            const r = await api('/admin/broadcast', { method: 'POST', body: { text } });
             // sending runs in the background, so this only confirms it started
             // — the finished count arrives as a DM from the bot
             toast(`Sending to ${r.queued} — you'll get a DM when it's done`);
