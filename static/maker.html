@@ -141,6 +141,12 @@ async function queue(closed = false) {
   html(`
     <h1>${esc(me.shop || 'Fulfilment')}</h1>
     <p class="sub">Signed in as ${esc(me.name)}</p>
+    <label class="tog">
+      <span><b>I'm available</b>
+        <div class="hint">Lets the shop know you're around to take orders.
+          Turn it off when you finish for the day.</div></span>
+      <input type="checkbox" id="avail" ${me.online ? 'checked' : ''}>
+    </label>
     <div class="row" style="gap:8px;margin:12px 0">
       <button class="mini ${closed ? 'ghost' : ''}" id="tab_open">Open</button>
       <button class="mini ${closed ? '' : 'ghost'}" id="tab_done">Finished</button>
@@ -168,6 +174,18 @@ async function queue(closed = false) {
   on('#tab_open', 'click', () => queue(false));
   on('#tab_done', 'click', () => queue(true));
   on('#refresh', 'click', () => queue(closed));
+  on('#avail', 'change', async (e) => {
+    const want = e.target.checked;
+    try {
+      await api('/status', { method: 'POST', body: { online: want } });
+      toast(want ? "You're marked available" : 'Marked unavailable');
+    } catch (err) {
+      // put the box back: a tick that silently failed to save would tell the
+      // maker one thing and the shop owner another
+      e.target.checked = !want;
+      toast(err.message || 'Could not update', 'err');
+    }
+  });
   on('#out', 'click', () => { session.clear(); signIn('Signed out.'); });
   view.querySelectorAll('[data-o]').forEach((el) =>
     el.onclick = () => thread(Number(el.dataset.o), closed));
@@ -180,13 +198,16 @@ async function thread(oid, cameFromClosed) {
   let draft = '';
 
   const paint = () => {
-    const f = d.fulfilment, o = d.order;
-    const [label, tone] = STAGE[f.stage] || [f.stage, ''];
+    // Defensive: a payload missing a block should degrade to a dash, not throw
+    // and leave the maker staring at a stale screen with an error toast.
+    const f = d.fulfilment || {};
+    const o = d.order || {};
+    const [label, tone] = STAGE[f.stage] || [f.stage || '—', ''];
     const open = !['done', 'cancelled'].includes(f.stage);
     html(`
       <button class="ghost mini" id="back" style="width:auto">← Orders</button>
-      <h1 style="margin-top:10px">#${esc(o.code)}</h1>
-      <p class="sub">${esc(o.product_name)} × ${o.qty}
+      <h1 style="margin-top:10px">#${esc(o.code || oid)}</h1>
+      <p class="sub">${esc(o.product_name || '')} × ${o.qty || 1}
         · <span class="pill ${tone}">${label}</span></p>
 
       <div class="card">

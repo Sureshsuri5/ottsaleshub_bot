@@ -275,6 +275,12 @@ async def auth_middleware(request: web.Request, handler: Callable):
         if not row or not row["is_active"]:
             return web.json_response({"error": "Account disabled."}, status=403)
         request["maker_id"] = mid
+        # Observed presence, throttled to once a minute inside the query. This
+        # is what makes a stale "online" tick detectable later.
+        try:
+            await db.touch_maker_seen(mid)
+        except Exception:                               # pragma: no cover
+            pass
         return await handler(request)
 
     user = verify_init_data(request.headers.get("X-Init-Data", "")
@@ -1022,9 +1028,17 @@ async def maker_auth(request):
                               "name": row["name"] or row["email"]})
 
 
+async def maker_status(request):
+    d = await body(request)
+    online = bool(d.get("online"))
+    await db.set_maker_online(request["maker_id"], online)
+    return web.json_response({"online": online})
+
+
 async def maker_me(request):
     m = await db.maker(request["maker_id"])
     return web.json_response({"name": (m["name"] or m["email"]) if m else "",
+                              "online": bool(m["is_online"]) if m else False,
                               "shop": cfg.shop_name})
 
 
@@ -1084,7 +1098,14 @@ async def maker_action(request):
         return web.json_response({"error": "Unknown action."}, status=400)
 
     f = await db.fulfilment(oid)
+    o = await db.order(oid)
+    # The same shape maker_thread returns. Omitting `order` here left the panel
+    # holding a response without it, and the next render died on d.order.code —
+    # so the first message or OTP request threw instead of repainting.
     return web.json_response({
+        "order": {"code": (o["code"] if o else None) or oid,
+                  "product_name": o["product_name"] if o else "",
+                  "qty": o["qty"] if o else 1},
         "fulfilment": {"stage": f["stage"], "number": f["number"],
                        "note": f["note"]} if f else None,
         "messages": [dict(m) for m in await db.fulfil_thread(oid)]})
@@ -1773,6 +1794,7 @@ def build_app(bot: Bot) -> web.Application:
     r.add_get("/maker", _page("maker.html"))
     r.add_post("/api/maker/auth", maker_auth)
     r.add_get("/api/maker/me", maker_me)
+    r.add_post("/api/maker/status", maker_status)
     r.add_get("/api/maker/orders", maker_orders)
     r.add_get("/api/maker/fulfil/{oid}", maker_thread)
     r.add_post("/api/maker/fulfil/{oid}", maker_action)

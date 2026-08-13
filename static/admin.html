@@ -1420,15 +1420,25 @@ function moreView() {
     const paintMakers = (rows) => {
       const el = view.querySelector('#makerlist');
       if (!el) return;
-      el.innerHTML = rows.length ? rows.map((m) => `
+      el.innerHTML = rows.length ? rows.map((m) => {
+        // A tick alone can lie: someone marks themselves available and then
+        // shuts the laptop. Show the claim, but downgrade it to "Away" once we
+        // have not seen a request from them in a while.
+        const seen = m.last_seen ? Date.parse(m.last_seen.replace(' ', 'T') + 'Z') : 0;
+        const fresh = seen && (Date.now() - seen) < 5 * 60 * 1000;
+        const [avail, tone] = !m.is_online ? ['Offline', '']
+          : fresh ? ['Online', 'ok'] : ['Away', 'wait'];
+        const ago = !seen ? 'never seen'
+          : fresh ? 'active now'
+          : `last seen ${new Date(seen).toLocaleString()}`;
+        return `
         <div class="between" style="padding:8px 0">
           <div class="grow trunc">
             <b>${esc(m.name || m.email)}</b>
-            <div class="small muted trunc">${esc(m.email)}
-              ${m.last_login ? '· last in ' + esc(String(m.last_login).slice(0, 10))
-                             : '· never signed in'}</div>
+            <div class="small muted trunc">${esc(m.email)} · ${ago}</div>
           </div>
           <div class="row" style="gap:6px">
+            <span class="pill ${tone}">${avail}</span>
             <span class="pill ${m.is_active ? 'ok' : 'bad'}">
               ${m.is_active ? 'Active' : 'Off'}</span>
             <button class="ghost mini" data-mk-t="${m.id}" data-on="${m.is_active ? 1 : 0}"
@@ -1436,7 +1446,7 @@ function moreView() {
             <button class="ghost mini danger-text" data-mk-d="${m.id}"
                     style="width:auto">Delete</button>
           </div>
-        </div>`).join('')
+        </div>`; }).join('')
         : '<p class="sub">No makers yet.</p>';
 
       el.querySelectorAll('[data-mk-t]').forEach((b) => b.onclick = async () => {

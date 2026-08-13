@@ -105,6 +105,8 @@ CREATE TABLE IF NOT EXISTS makers (
     pw_hash    TEXT    NOT NULL,
     name       TEXT    NOT NULL DEFAULT '',
     is_active  INTEGER NOT NULL DEFAULT 1,
+    is_online  INTEGER NOT NULL DEFAULT 0,
+    last_seen  TEXT,
     created_at TEXT    NOT NULL DEFAULT (datetime('now')),
     last_login TEXT
 );
@@ -486,6 +488,10 @@ async def _migrate() -> None:
         "ALTER TABLE fulfilment ALTER COLUMN user_id TYPE BIGINT",
         "ALTER TABLE fulfilment ALTER COLUMN order_id TYPE BIGINT",
         "ALTER TABLE fulfil_msgs ALTER COLUMN order_id TYPE BIGINT",
+        # maker availability: the flag is what they told us, last_seen is what
+        # we observed. Both are needed — see maker_status() for why.
+        "ALTER TABLE makers ADD COLUMN is_online INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE makers ADD COLUMN last_seen TEXT",
     ):
         try:
             await ex(stmt)
@@ -1777,6 +1783,33 @@ async def fulfil_scrub(oid: int) -> int:
 
 # ------------------------------------------------------------------- makers
 
+ONLINE_STALE_MIN = 5
+"""How long a maker's "online" claim survives without any sign of them.
+
+A checkbox records an intention, not a fact — somebody ticks it, then closes
+the laptop and goes to dinner, and the panel would still say they were there.
+Pairing the flag with a last_seen timestamp means the honest answer is
+available: they said they were on, and here is when we last saw them.
+"""
+
+
+async def set_maker_online(mid: int, online: bool) -> None:
+    await ex("UPDATE makers SET is_online = ?, last_seen = datetime('now') "
+             "WHERE id = ?", (1 if online else 0, mid))
+
+
+async def touch_maker_seen(mid: int) -> None:
+    """Heartbeat on every maker request, written at most once a minute.
+
+    The guard in the WHERE clause is what keeps this from being a write on
+    every single API call — polling a thread would otherwise hammer the row
+    for a timestamp nobody reads at that resolution.
+    """
+    await ex("UPDATE makers SET last_seen = datetime('now') WHERE id = ? "
+             "AND (last_seen IS NULL OR last_seen <= datetime('now', '-60 seconds'))",
+             (mid,))
+
+
 async def maker_by_email(email: str):
     return await q1("SELECT * FROM makers WHERE LOWER(email) = LOWER(?)",
                     (email.strip().lower(),))
@@ -1787,8 +1820,8 @@ async def maker(mid: int):
 
 
 async def makers_list():
-    return await q("SELECT id, email, name, is_active, created_at, last_login "
-                   "FROM makers ORDER BY name, email")
+    return await q("SELECT id, email, name, is_active, is_online, last_seen, "
+                   "created_at, last_login FROM makers ORDER BY name, email")
 
 
 async def add_maker(email: str, pw_hash: str, name: str) -> int:
