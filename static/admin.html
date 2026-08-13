@@ -993,7 +993,13 @@ function userView(uid) {
       <div class="row"><input id="delta" inputmode="decimal" placeholder="e.g. 500 or -200">
         <button class="mini" id="apply">Apply</button></div>
       <button class="ghost" id="ban" style="margin-top:14px">
-        ${u.is_banned ? 'Restore access' : 'Ban from shop'}</button>`);
+        ${u.is_banned ? 'Restore access' : 'Ban from shop'}</button>
+
+      <h2>Send a message</h2>
+      <p class="sub">Goes straight to this person as a private message from the
+        bot. HTML formatting works.</p>
+      <textarea id="dm" placeholder="Hi — about your recent order…"></textarea>
+      <button id="dmsend" style="margin-top:8px">Send message</button>`);
 
     on('#apply', 'click', async () => {
       const delta = Number(view.querySelector('#delta').value);
@@ -1004,6 +1010,22 @@ function userView(uid) {
     on('#ban', 'click', async () => {
       await api(`/admin/user/${uid}`, { method: 'POST', body: { banned: !u.is_banned } });
       toast(u.is_banned ? 'Access restored' : 'User banned'); refresh();
+    });
+    on('#dmsend', 'click', async (e) => {
+      const box = view.querySelector('#dm');
+      const message = box.value.trim();
+      if (!message) return toast('Write the message first', 'err');
+      e.target.disabled = true;
+      try {
+        await api(`/admin/user/${uid}`, { method: 'POST', body: { message } });
+        // only clear once the send is confirmed — a delivery failure that also
+        // wiped the text would cost the message as well as the attempt
+        box.value = '';
+        toast('Message sent');
+      } catch (err) {
+        toast(err.message || 'Could not send', 'err');
+      }
+      e.target.disabled = false;
     });
   });
 }

@@ -1016,6 +1016,17 @@ async def adm_user_action(request):
             pass
     if "banned" in d:
         await db.set_ban(uid, bool(d["banned"]))
+    if str(d.get("message", "")).strip():
+        # A direct note to one person. Not routed through the broadcast path:
+        # that resolves an audience and sends in the background, whereas this
+        # is a single send whose failure the admin needs to see immediately —
+        # if the buyer has blocked the bot, saying "sent" would be a lie.
+        try:
+            await request.app["bot"].send_message(
+                uid, str(d["message"]).strip())
+        except Exception as e:
+            return web.json_response(
+                {"error": f"Could not deliver: {e}"}, status=502)
     u = await db.get_user(uid)
     return web.json_response({**dict(u), **await db.user_summary(uid)})
 
