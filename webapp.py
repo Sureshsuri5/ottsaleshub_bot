@@ -216,6 +216,18 @@ async def auth_middleware(request: web.Request, handler: Callable):
     user = verify_init_data(request.headers.get("X-Init-Data", "")
                             or request.query.get("_auth", ""))
     renew_for: int | None = None
+    has_session = bool(request.headers.get("X-Session", "")
+                       or request.query.get("_session", ""))
+    if user is not None and not has_session:
+        # Telegram stops refreshing initData after a day, and inside the Mini
+        # App there is no session behind it — so the panel would authenticate
+        # fine all week and then fail with "No access" on the same device that
+        # was working an hour earlier. Minting a session on the first
+        # authenticated call gives that path something durable to fall back on.
+        try:
+            renew_for = int(user["id"])
+        except (KeyError, TypeError, ValueError):       # pragma: no cover
+            renew_for = None
 
     if user is None:                                  # browser session cookie
         raw = (request.headers.get("X-Session", "")
