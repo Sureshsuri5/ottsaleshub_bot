@@ -356,6 +356,37 @@ async def _start_fulfilment(bot: Bot, oid: int, p) -> bool:
     return True
 
 
+def _digits_only(text: str) -> str:
+    """Strip the punctuation people put in numbers, keep nothing else."""
+    return re.sub(r"[\s\-()+.]", "", text or "")
+
+
+def looks_like_otp(text: str) -> bool:
+    """Whether a buyer message is the one-time code and nothing else.
+
+    Deliberately strict: the whole message has to be the code. "wait im fixing
+    code" was being accepted as an OTP and answered with "Code received", which
+    tells the buyer we have something we do not and moves the order on while
+    they are still looking for it. A message with any words in it is a message,
+    not a code — the operator can read it and act.
+
+    Not extracting digits from a sentence either. "waiting since 2024" would
+    hand the operator 2024 as a code, and a wrong code is worse than none.
+    """
+    d = _digits_only(text)
+    return d.isdigit() and 4 <= len(d) <= 8
+
+
+def looks_like_number(text: str) -> bool:
+    """Whether a buyer message is a phone number and nothing else.
+
+    Same reasoning as above, at the stage before: an activation number of "hi"
+    is worse than still waiting for one, because the operator will try it.
+    """
+    d = _digits_only(text)
+    return d.isdigit() and 7 <= len(d) <= 15
+
+
 async def fulfil_from_user(bot: Bot, uid: int, text: str) -> bool:
     """A buyer message that belongs to an open manual order. False if none."""
     f = await db.active_fulfilment(uid)
@@ -367,15 +398,26 @@ async def fulfil_from_user(bot: Bot, uid: int, text: str) -> bool:
     await db.fulfil_say(oid, "user", text)
 
     if f["stage"] == "awaiting_number":
-        # First reply is the activation number. Captured onto the row rather
-        # than left in the transcript so the panel can show it beside the order
-        # without an operator scrolling the chat for it every time.
+        if not looks_like_number(text):
+            # Chatter while we wait. Pass it to the operator, stay put, and say
+            # nothing that implies we got the number — the buyer would think
+            # they were done.
+            await notify_admins(bot, f"💬 <b>#{code}</b> buyer replied "
+                                     f"(still no number).", skip=uid)
+            return True
+        # First real number is the activation number. Captured onto the row
+        # rather than left in the transcript so the panel can show it beside
+        # the order without an operator scrolling the chat for it every time.
         await db.set_fulfil(oid, number=text.strip()[:64], stage="working", nudged=0)
         await _safe(bot, uid, await texts.t("fulfil_got_number", oid=code))
         await notify_admins(bot, f"🔢 <b>#{code}</b> number received — activate it.",
                             skip=uid)
     else:
         if f["stage"] == "awaiting_otp":
+            if not looks_like_otp(text):
+                await notify_admins(bot, f"💬 <b>#{code}</b> buyer replied "
+                                         f"(not a code yet).", skip=uid)
+                return True
             await db.set_fulfil(oid, stage="working", nudged=0)
             await _safe(bot, uid, await texts.t("fulfil_got_otp", oid=code))
         await notify_admins(bot, f"💬 <b>#{code}</b> buyer replied.", skip=uid)
