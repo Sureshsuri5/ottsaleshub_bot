@@ -511,6 +511,8 @@ async def _migrate() -> None:
         # some activations need only the address or number — no code round trip
         "ALTER TABLE products ADD COLUMN needs_otp INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE fulfilment ADD COLUMN needs_otp INTEGER NOT NULL DEFAULT 1",
+        # the second detail, when a product needs two (e.g. email then a link)
+        "ALTER TABLE fulfilment ADD COLUMN extra TEXT NOT NULL DEFAULT ''",
     ):
         try:
             await ex(stmt)
@@ -1688,7 +1690,7 @@ async def list_users(term: str = "", limit: int = 50, offset: int = 0):
 # Orders a human has to work by hand. Everything here is keyed on order_id:
 # an order has at most one fulfilment, and the transcript hangs off the same id.
 
-OPEN_STAGES = ("awaiting_number", "awaiting_otp", "working")
+OPEN_STAGES = ("awaiting_number", "awaiting_link", "awaiting_otp", "working")
 
 
 async def open_fulfilment(oid: int, uid: int) -> None:
@@ -1774,7 +1776,8 @@ async def fulfil_stale(minutes: int, max_nudges: int = 1):
     would be blaming them for a delay that is ours.
     """
     return await q(
-        "SELECT * FROM fulfilment WHERE stage IN ('awaiting_number', 'awaiting_otp') "
+        "SELECT * FROM fulfilment WHERE stage IN "
+        "('awaiting_number', 'awaiting_link', 'awaiting_otp') "
         "AND nudged < ? AND updated_at <= datetime('now', ?)",
         (max_nudges, f"-{int(minutes)} minutes"))
 

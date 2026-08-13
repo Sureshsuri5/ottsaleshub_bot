@@ -89,6 +89,7 @@ async function api(path, opts = {}) {
 
 const STAGE = {
   awaiting_number: ['Waiting for number', 'wait'],
+  awaiting_link: ['Waiting for link', 'wait'],
   awaiting_otp: ['Waiting for OTP', 'wait'],
   working: ['Your turn', 'ok'],
   done: ['Complete', 'ok'],
@@ -212,8 +213,12 @@ async function thread(oid, cameFromClosed) {
 
       <div class="card">
         <div class="between"><span class="muted small">${
-          f.ask_for === 'email' ? 'Email to activate' : 'Number to activate'}</span>
+          f.ask_for === 'number' ? 'Number to activate' : 'Email to activate'}</span>
           <b class="num">${f.number ? esc(f.number) : '—'}</b></div>
+        ${f.extra ? `<div class="between" style="margin-top:10px">
+          <span class="muted small">Link</span>
+          <span class="trunc" style="max-width:60%"><a target="_blank"
+            href="${esc(f.extra)}">${esc(f.extra)}</a></span></div>` : ''}
       </div>
 
       <p class="sub" style="margin-top:14px;margin-bottom:6px">Conversation with the buyer</p>

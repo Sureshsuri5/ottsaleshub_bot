@@ -175,6 +175,23 @@ MESSAGES: dict[str, Msg] = {
         "We're activating it now. Nothing more is needed from you — "
         "we'll message you here as soon as it's live.",
         "Manual order: email received, no code needed", "Fulfilment", ("oid",)),
+    "fulfil_ask_link": Msg(
+        "{{m_card}} <b>Order #{oid} — one more thing</b>\n\n"
+        "<b>Reply with the link.</b>\n"
+        "Paste the full address, starting with <code>https://</code>.\n\n"
+        "<i>Send just the link on its own so we pick it up right away.</i>",
+        "Manual order: ask for the link", "Fulfilment",
+        ("oid", "product", "qty")),
+    "fulfil_got_link": Msg(
+        "{{m_ok}} <b>Got it — order #{oid}</b>\n\n"
+        "We're activating it now. Stay in this chat — we'll confirm here as "
+        "soon as it's live.",
+        "Manual order: link received", "Fulfilment", ("oid",)),
+    "fulfil_nudge_link": Msg(
+        "{{m_box}} <b>Still waiting — order #{oid}</b>\n\n"
+        "We need the link before we can continue. Reply here whenever "
+        "you're ready.",
+        "Manual order: reminder for the link", "Fulfilment", ("oid",)),
     "fulfil_ask_otp": Msg(
         "{{m_card}} <b>Order #{oid} — code needed</b>\n\n"
         "A one-time code has been sent to your number. "

@@ -1079,6 +1079,7 @@ async def maker_thread(request):
                   "qty": o["qty"] if o else 1},
         "fulfilment": {"stage": f["stage"], "number": f["number"],
                        "note": f["note"], "ask_for": f["ask_for"],
+                       "extra": f["extra"],
                        "needs_otp": bool(f["needs_otp"])},
         "messages": [dict(m) for m in await db.fulfil_thread(oid)]})
 
@@ -1124,6 +1125,7 @@ async def maker_action(request):
                   "qty": o["qty"] if o else 1},
         "fulfilment": {"stage": f["stage"], "number": f["number"],
                        "note": f["note"], "ask_for": f["ask_for"],
+                       "extra": f["extra"],
                        "needs_otp": bool(f["needs_otp"])} if f else None,
         "messages": [dict(m) for m in await db.fulfil_thread(oid)]})
 

@@ -355,13 +355,12 @@ async def _start_fulfilment(bot: Bot, oid: int, p) -> bool:
     otp = bool(p["needs_otp"]) if "needs_otp" in p.keys() else True
     if not otp:
         await db.set_fulfil(oid, needs_otp=0)
-    want = "email" if ask == "email" else "number"
+    want = first_want(ask)
     code = o["code"] or oid
     await db.fulfil_say(oid, "system",
                         f"Paid — {p['name']} × {o['qty']}. Waiting for the {want}.")
     await _safe(bot, o["user_id"],
-                await texts.t("fulfil_ask_email" if ask == "email"
-                              else "fulfil_ask_number", oid=code,
+                await texts.t(_ASK_TEMPLATE[want], oid=code,
                               product=_esc(p["name"]), qty=o["qty"]))
     await notify_admins(
         bot, f"🛠 Manual order <b>#{code}</b> — {_esc(p['name'])} × {o['qty']}\n"
@@ -414,6 +413,46 @@ def looks_like_email(text: str) -> bool:
     return bool(re.fullmatch(r"[^@\s]+@[^@\s.]+\.[^@\s]+", t)) and len(t) <= 254
 
 
+def looks_like_link(text: str) -> bool:
+    """Whether a buyer message is a URL and nothing else.
+
+    Requires a scheme rather than accepting anything with a dot in it: an
+    operator is going to click this, and "check gmail.com" should reach them as
+    a message, not as a link they open. Bare domains are rejected for the same
+    reason the other checks are strict — a half-guessed value is worse than
+    asking again.
+    """
+    t = (text or "").strip()
+    return bool(re.fullmatch(r"https?://[^\s]{3,2000}", t))
+
+
+def first_want(ask: str) -> str:
+    """Which detail is collected first: 'number', 'email' or 'link'."""
+    return {"email": "email", "link": "link", "email_link": "email"}.get(
+        ask or "number", "number")
+
+
+def second_want(ask: str) -> str | None:
+    """The follow-up detail, or None when one is enough."""
+    return "link" if ask == "email_link" else None
+
+
+def _valid_for(want: str, text: str) -> bool:
+    if want == "email":
+        return looks_like_email(text)
+    if want == "link":
+        return looks_like_link(text)
+    return looks_like_number(text)
+
+
+_ASK_TEMPLATE = {"number": "fulfil_ask_number", "email": "fulfil_ask_email",
+                 "link": "fulfil_ask_link"}
+_GOT_TEMPLATE = {"number": "fulfil_got_number", "email": "fulfil_got_email",
+                 "link": "fulfil_got_link"}
+_NUDGE_TEMPLATE = {"number": "fulfil_nudge_number", "email": "fulfil_nudge_email",
+                   "link": "fulfil_nudge_link"}
+
+
 async def fulfil_from_user(bot: Bot, uid: int, text: str) -> bool:
     """A buyer message that belongs to an open manual order. False if none."""
     f = await db.active_fulfilment(uid)
@@ -424,33 +463,50 @@ async def fulfil_from_user(bot: Bot, uid: int, text: str) -> bool:
     code = (o["code"] if o else None) or oid
     await db.fulfil_say(oid, "user", text)
 
-    if f["stage"] == "awaiting_number":
-        wants_email = (f["ask_for"] if "ask_for" in f.keys() else "number") == "email"
-        ok = looks_like_email(text) if wants_email else looks_like_number(text)
-        if not ok:
+    ask = (f["ask_for"] if "ask_for" in f.keys() else "number") or "number"
+    wants_otp = bool(f["needs_otp"]) if "needs_otp" in f.keys() else True
+
+    if f["stage"] in ("awaiting_number", "awaiting_link"):
+        # Which of the two details this reply is meant to be.
+        second = f["stage"] == "awaiting_link"
+        want = second_want(ask) if second else first_want(ask)
+        want = want or "number"
+
+        if not _valid_for(want, text):
             # Chatter while we wait. Pass it to the operator, stay put, and say
             # nothing that implies we got the detail — the buyer would think
             # they were done.
             await notify_admins(bot, f"💬 <b>#{code}</b> buyer replied "
-                                     f"(still no {'email' if wants_email else 'number'}).",
-                                skip=uid)
+                                     f"(still no {want}).", skip=uid)
             return True
-        # First real answer is what the operator activates against. Captured
-        # onto the row rather than left in the transcript so the panel can show
-        # it beside the order without scrolling the chat for it every time.
-        await db.set_fulfil(oid, number=text.strip()[:254], stage="working", nudged=0)
-        wants_otp = bool(f["needs_otp"]) if "needs_otp" in f.keys() else True
+
+        # Captured onto the row rather than left in the transcript so the panel
+        # can show it beside the order without scrolling the chat every time.
+        field = "extra" if second else "number"
+        await db.set_fulfil(oid, **{field: text.strip()[:2000]}, nudged=0)
+
+        follow = None if second else second_want(ask)
+        if follow:
+            # One down, one to go. Don't send the "we're activating it now"
+            # confirmation yet — nothing can start until both are in hand.
+            await db.set_fulfil(oid, stage="awaiting_link")
+            await _safe(bot, uid, await texts.t(_ASK_TEMPLATE[follow], oid=code))
+            await notify_admins(bot, f"🔢 <b>#{code}</b> {want} received — "
+                                     f"waiting on the {follow}.", skip=uid)
+            return True
+
+        await db.set_fulfil(oid, stage="working")
         if wants_otp:
-            kind = "fulfil_got_email" if wants_email else "fulfil_got_number"
+            kind = _GOT_TEMPLATE[want]
         else:
             # No code is coming, so don't tell them to watch for one — a buyer
             # waiting for a code that never arrives will message asking where
             # it is, which is work for the operator and worry for them.
-            kind = "fulfil_got_email_only" if wants_email else "fulfil_got_number_only"
+            kind = ("fulfil_got_email_only" if want == "email"
+                    else "fulfil_got_number_only")
         await _safe(bot, uid, await texts.t(kind, oid=code))
         await notify_admins(
-            bot, f"🔢 <b>#{code}</b> {'email' if wants_email else 'number'} "
-                 f"received — activate it.", skip=uid)
+            bot, f"🔢 <b>#{code}</b> {want} received — activate it.", skip=uid)
     else:
         if f["stage"] == "awaiting_otp":
             if not looks_like_otp(text):
@@ -553,9 +609,11 @@ async def nudge_fulfilments(bot: Bot) -> None:
         if not o or o["status"] != "fulfilling":
             continue
         code = o["code"] or oid
-        wants_email = (f["ask_for"] if "ask_for" in f.keys() else "number") == "email"
-        if f["stage"] == "awaiting_number":
-            kind = "fulfil_nudge_email" if wants_email else "fulfil_nudge_number"
+        ask = (f["ask_for"] if "ask_for" in f.keys() else "number") or "number"
+        if f["stage"] == "awaiting_link":
+            kind = _NUDGE_TEMPLATE["link"]
+        elif f["stage"] == "awaiting_number":
+            kind = _NUDGE_TEMPLATE[first_want(ask)]
         else:
             kind = "fulfil_nudge_otp"
         try:

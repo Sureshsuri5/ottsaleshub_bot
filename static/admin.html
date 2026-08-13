@@ -370,10 +370,14 @@ function productView(pid) {
       ${p.manual ? `
         <label style="margin-top:14px">Ask the buyer for</label>
         <select id="askfor">
-          <option value="number" ${p.ask_for !== 'email' ? 'selected' : ''}>
-            Phone number</option>
+          <option value="number" ${p.ask_for !== 'email' && p.ask_for !== 'link'
+            && p.ask_for !== 'email_link' ? 'selected' : ''}>Phone number</option>
           <option value="email" ${p.ask_for === 'email' ? 'selected' : ''}>
             Email address</option>
+          <option value="link" ${p.ask_for === 'link' ? 'selected' : ''}>
+            Link</option>
+          <option value="email_link" ${p.ask_for === 'email_link' ? 'selected' : ''}>
+            Email, then link</option>
         </select>
         <div class="hint">What the buyer is asked for after paying. Only
           affects new orders.</div>
@@ -852,6 +856,7 @@ function usersView(q = '') {
 
 const STAGE = {
   awaiting_number: ['Needs number', 'wait'],
+  awaiting_link:   ['Needs link',   'wait'],
   awaiting_otp:    ['Needs OTP',    'wait'],
   working:         ['Your turn',    'ok'],
   done:            ['Complete',     'ok'],
@@ -928,8 +933,12 @@ function threadView(oid) {
           <div class="between"><span class="muted small">Buyer</span>
             <span class="trunc">${esc((d.user && d.user.first_name) || 'Unnamed')}
               ${d.user && d.user.username ? '@' + esc(d.user.username) : ''}</span></div>
+          ${f.extra ? `<div class="between" style="margin-top:10px">
+            <span class="muted small">Link</span>
+            <span class="trunc" style="max-width:60%"><a target="_blank"
+              href="${esc(f.extra)}">${esc(f.extra)}</a></span></div>` : ''}
           <div class="between" style="margin-top:10px"><span class="muted small">${
-            f.ask_for === 'email' ? 'Email' : 'Number'}</span>
+            f.ask_for === 'number' ? 'Number' : 'Email'}</span>
             <b class="num">${f.number ? esc(f.number) : '—'}</b></div>
         </div>
 
