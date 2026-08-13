@@ -215,10 +215,7 @@ async function thread(oid, cameFromClosed) {
           <b class="num">${f.number ? esc(f.number) : '—'}</b></div>
       </div>
 
-      <div class="row between" style="margin-top:14px">
-        <span class="sub" style="margin:0">Conversation with the buyer</span>
-        <button class="ghost mini" id="reload" style="width:auto">🔄 Refresh</button>
-      </div>
+      <p class="sub" style="margin-top:14px;margin-bottom:6px">Conversation with the buyer</p>
       <div id="thread" class="wallet" style="margin-top:6px">
         ${(d.messages || []).map((m) => `
           <div class="small" style="margin:6px 0;white-space:pre-wrap;${
@@ -233,14 +230,16 @@ async function thread(oid, cameFromClosed) {
       ${open ? `
         <label style="margin-top:14px">Message the buyer</label>
         <div class="row"><input id="msg" placeholder="Type a reply…">
-          <button class="mini" id="send">Send</button></div>
+          <button class="mini" id="send">Send</button>
+          <button class="ghost mini" id="reload" style="width:auto">🔄</button></div>
         <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
           <button class="ghost mini" id="otp">🔑 Request OTP</button>
           <button class="ghost mini" id="done">✅ Mark complete</button>
         </div>
         <p class="sub" style="margin-top:12px">Can't activate it? Say so in the
           chat and the shop owner will handle the refund.</p>`
-      : `<p class="sub" style="margin-top:14px">This order is closed.</p>`}`);
+      : `<p class="sub" style="margin-top:14px">This order is closed.</p>
+         <button class="ghost mini" id="reload" style="width:auto">🔄 Refresh</button>`}`);
 
     const t = view.querySelector('#thread');
     if (t) t.scrollTop = t.scrollHeight;
