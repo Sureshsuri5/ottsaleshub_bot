@@ -202,8 +202,10 @@ async function thread(oid, cameFromClosed) {
         ${(d.messages || []).map((m) => `
           <div class="small" style="margin:6px 0;white-space:pre-wrap;${
             m.sender === 'system' ? 'font-style:italic;opacity:.6'
-            : m.sender === 'admin' ? 'text-align:right' : ''}">${
-            m.sender === 'user' ? '👤 ' : m.sender === 'admin' ? '🛠 ' : ''
+            : m.sender === 'user' ? '' : 'text-align:right'}">${
+            m.sender === 'user' ? '👤 '
+            : m.sender === 'maker' ? '🏭 you: '
+            : m.sender === 'admin' ? '🛠 shop: ' : ''
             }${esc(m.body)}</div>`).join('') || '<p class="sub">No messages yet.</p>'}
       </div>
 

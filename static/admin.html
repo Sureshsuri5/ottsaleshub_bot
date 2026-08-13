@@ -894,8 +894,10 @@ function threadView(oid) {
             <div class="between small" style="margin:6px 0;gap:10px">
               <span class="grow" style="white-space:pre-wrap;${
                 m.sender === 'system' ? 'font-style:italic;opacity:.6'
-                : m.sender === 'admin' ? 'text-align:right' : ''}">${
-                m.sender === 'user' ? '👤 ' : m.sender === 'admin' ? '🛠 ' : ''
+                : m.sender === 'user' ? '' : 'text-align:right'}">${
+                m.sender === 'user' ? '👤 '
+                : m.sender === 'maker' ? '🏭 '
+                : m.sender === 'admin' ? '🛠 ' : ''
                 }${esc(m.body)}</span>
             </div>`).join('') || '<p class="sub">No messages yet.</p>'}
         </div>

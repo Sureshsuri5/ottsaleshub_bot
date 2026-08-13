@@ -1067,7 +1067,7 @@ async def maker_action(request):
         text = str(d.get("text", "")).strip()
         if not text:
             return web.json_response({"error": "Write a message first."}, status=400)
-        if not await delivery.fulfil_to_user(bot, oid, text):
+        if not await delivery.fulfil_to_user(bot, oid, text, sender="maker"):
             return web.json_response({"error": "Could not deliver."}, status=502)
     elif act == "ask_otp":
         await delivery.fulfil_request_otp(bot, oid)

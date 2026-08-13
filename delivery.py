@@ -358,13 +358,19 @@ async def fulfil_from_user(bot: Bot, uid: int, text: str) -> bool:
     return True
 
 
-async def fulfil_to_user(bot: Bot, oid: int, text: str) -> bool:
-    """An operator's message, sent from the panel out to the buyer."""
+async def fulfil_to_user(bot: Bot, oid: int, text: str, sender: str = "admin") -> bool:
+    """An operator's message, sent from a panel out to the buyer.
+
+    `sender` distinguishes the shop owner from a supplier. The buyer sees the
+    same thing either way — they are talking to the shop — but the transcript
+    has to record which of them said it. Filed under one name, a promise a
+    maker made to a customer reads as one the owner made.
+    """
     f = await db.fulfilment(oid)
     if not f:
         return False
     o = await db.order(oid)
-    await db.fulfil_say(oid, "admin", text)
+    await db.fulfil_say(oid, sender, text)
     await _safe(bot, f["user_id"],
                 await texts.t("fulfil_admin_msg", oid=(o["code"] if o else None) or oid,
                               body=_esc(text)))
