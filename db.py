@@ -111,6 +111,17 @@ CREATE TABLE IF NOT EXISTS makers (
     last_login TEXT
 );
 
+-- A price set for one buyer on one product. Sits above the tier system: tiers
+-- are for groups on the same terms, this is for the single customer who
+-- negotiated something of their own.
+CREATE TABLE IF NOT EXISTS user_prices (
+    user_id    BIGINT  NOT NULL REFERENCES users(tg_id),
+    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    price      REAL    NOT NULL,
+    created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, product_id)
+);
+
 CREATE TABLE IF NOT EXISTS bank_sms (
     utr        TEXT PRIMARY KEY,
     amount     REAL NOT NULL,
@@ -1879,6 +1890,37 @@ async def maker_owns(mid: int, oid: int) -> bool:
     r = await q1("SELECT 1 AS ok FROM fulfilment WHERE order_id = ? AND maker_id = ?",
                  (oid, mid))
     return bool(r)
+
+
+async def user_prices(uid: int) -> dict[int, float]:
+    """Every custom price this buyer has, keyed by product id.
+
+    One query rather than a lookup per product: the catalogue screens price a
+    whole list at once, and asking per product turned a single render into
+    dozens of round trips on a hosted database.
+    """
+    rows = await q("SELECT product_id, price FROM user_prices WHERE user_id = ?",
+                   (uid,))
+    return {r["product_id"]: float(r["price"]) for r in rows}
+
+
+async def set_user_price(uid: int, pid: int, price: float) -> None:
+    await ex("INSERT INTO user_prices (user_id, product_id, price) "
+             "VALUES (?, ?, ?) ON CONFLICT (user_id, product_id) "
+             "DO UPDATE SET price = EXCLUDED.price", (uid, pid, round(price, 2)))
+
+
+async def clear_user_price(uid: int, pid: int) -> int:
+    return await ex_count("DELETE FROM user_prices WHERE user_id = ? "
+                          "AND product_id = ?", (uid, pid))
+
+
+async def user_price_rows(uid: int):
+    """Custom prices with product names and list prices, for the panel."""
+    return await q(
+        "SELECT up.product_id, up.price, p.name, p.price AS list_price "
+        "FROM user_prices up JOIN products p ON p.id = up.product_id "
+        "WHERE up.user_id = ? ORDER BY p.name", (uid,))
 
 
 async def top_referrers(limit: int = 100, offset: int = 0):

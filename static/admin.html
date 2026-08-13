@@ -1058,6 +1058,18 @@ function userView(uid) {
       <button class="ghost" id="ban" style="margin-top:14px">
         ${u.is_banned ? 'Restore access' : 'Ban from shop'}</button>
 
+      <h2>Custom prices</h2>
+      <p class="sub">A price just for this buyer. Overrides their tier and the
+        list price, everywhere — shop, checkout and charge.</p>
+      <div id="upl" class="wallet"><p class="sub">Loading…</p></div>
+      <div class="row" style="margin-top:10px">
+        <select id="up_pid"><option value="">Choose a product…</option></select>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <input id="up_price" inputmode="decimal" placeholder="Price for this buyer">
+        <button class="mini" id="up_set">Set</button>
+      </div>
+
       <h2>Send a message</h2>
       <p class="sub">Goes straight to this person as a private message from the
         bot. HTML formatting works.</p>
@@ -1074,6 +1086,53 @@ function userView(uid) {
       await api(`/admin/user/${uid}`, { method: 'POST', body: { banned: !u.is_banned } });
       toast(u.is_banned ? 'Access restored' : 'User banned'); refresh();
     });
+    const paintPrices = (rows) => {
+      const el = view.querySelector('#upl');
+      if (!el) return;
+      el.innerHTML = rows.length ? rows.map((r) => `
+        <div class="between" style="padding:8px 0">
+          <div class="grow trunc"><b>${esc(r.name)}</b>
+            <div class="small muted">list ${money(r.list_price)}
+              → <b>${money(r.price)}</b></div></div>
+          <button class="ghost mini danger-text" data-up-x="${r.product_id}"
+                  style="width:auto">Remove</button>
+        </div>`).join('')
+        : '<p class="sub">No custom prices — this buyer pays their tier or list price.</p>';
+      el.querySelectorAll('[data-up-x]').forEach((b) => b.onclick = async () => {
+        const r = await api(`/admin/user/${uid}/prices`, { method: 'POST',
+          body: { product_id: Number(b.dataset.upX), clear: 1 } });
+        toast('Custom price removed'); paintPrices(r.prices);
+      });
+    };
+
+    // list and picker load after the main render: neither is needed to read the
+    // screen, and blocking on two more requests would slow every visit
+    api(`/admin/user/${uid}/prices`).then((r) => paintPrices(r.prices)).catch(() => {});
+    api('/admin/catalog').then((cats) => {
+      const sel = view.querySelector('#up_pid');
+      if (!sel) return;
+      cats.flatMap((c) => c.products).forEach((p) => {
+        const o = document.createElement('option');
+        o.value = p.id;
+        o.textContent = `${p.name} — ${money(p.price)}`;
+        sel.appendChild(o);
+      });
+    }).catch(() => {});
+
+    on('#up_set', 'click', async () => {
+      const pid = view.querySelector('#up_pid').value;
+      const price = view.querySelector('#up_price').value.trim();
+      if (!pid) return toast('Choose a product', 'err');
+      if (price === '' || isNaN(Number(price))) return toast('Enter a price', 'err');
+      try {
+        const r = await api(`/admin/user/${uid}/prices`, { method: 'POST',
+          body: { product_id: Number(pid), price: Number(price) } });
+        view.querySelector('#up_price').value = '';
+        toast('Price set for this buyer');
+        paintPrices(r.prices);
+      } catch (err) { toast(err.message, 'err'); }
+    });
+
     on('#dmsend', 'click', async (e) => {
       const box = view.querySelector('#dm');
       const message = box.value.trim();

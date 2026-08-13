@@ -1207,6 +1207,30 @@ async def adm_fulfil_action(request):
         "messages": [dict(m) for m in await db.fulfil_thread(oid)]})
 
 
+async def adm_user_prices(request):
+    """Custom prices for one buyer. GET lists them, POST sets or clears one."""
+    uid = int(request.match_info["uid"])
+    if request.method == "POST":
+        d = await body(request)
+        pid = int(d.get("product_id") or 0)
+        if not pid:
+            return web.json_response({"error": "Pick a product."}, status=400)
+        if d.get("clear"):
+            await db.clear_user_price(uid, pid)
+        else:
+            try:
+                price = round(float(d.get("price")), 2)
+            except (TypeError, ValueError):
+                return web.json_response({"error": "Price must be a number."},
+                                         status=400)
+            if price < 0:
+                return web.json_response({"error": "Price can't be negative."},
+                                         status=400)
+            await db.set_user_price(uid, pid, price)
+    return web.json_response({"prices": [dict(r) for r in
+                                         await db.user_price_rows(uid)]})
+
+
 async def adm_referrers(request):
     rows = await db.top_referrers(200)
     return web.json_response([dict(r) for r in rows])
@@ -1868,6 +1892,8 @@ def build_app(bot: Bot) -> web.Application:
     r.add_post("/api/admin/wallet/hide", adm_wallet_hide)
     r.add_get("/api/admin/users", adm_users)
     r.add_get("/api/admin/referrers", adm_referrers)
+    r.add_get("/api/admin/user/{uid}/prices", adm_user_prices)
+    r.add_post("/api/admin/user/{uid}/prices", adm_user_prices)
     r.add_get("/api/admin/fulfil", adm_fulfil)
     r.add_get("/api/admin/fulfil/{oid}", adm_fulfil_thread)
     r.add_post("/api/admin/fulfil/{oid}", adm_fulfil_action)
