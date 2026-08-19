@@ -94,6 +94,7 @@ const STAGE = {
   working: ['Your turn', 'ok'],
   done: ['Complete', 'ok'],
   cancelled: ['Cancelled', 'bad'],
+  closed: ['Closed', 'bad'],
 };
 
 function signIn(msg) {
@@ -204,7 +205,7 @@ async function thread(oid, cameFromClosed) {
     const f = d.fulfilment || {};
     const o = d.order || {};
     const [label, tone] = STAGE[f.stage] || [f.stage || '—', ''];
-    const open = !['done', 'cancelled'].includes(f.stage);
+    const open = !['done', 'cancelled', 'closed'].includes(f.stage);
     html(`
       <button class="ghost mini" id="back" style="width:auto">← Orders</button>
       <h1 style="margin-top:10px">#${esc(o.code || oid)}</h1>

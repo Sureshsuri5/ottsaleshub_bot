@@ -585,9 +585,44 @@ async def fulfil_cancel(bot: Bot, oid: int, reason: str = "") -> bool:
     f = await db.fulfilment(oid)
     if not o or not f or o["status"] == "delivered":
         return False
+    # The stage, not just the status, decides whether this is still live. An
+    # order cancelled a moment ago is 'cancelled', not 'delivered', so the
+    # status check alone would let a second call refund the buyer twice.
+    if f["stage"] not in db.OPEN_STAGES:
+        return False
     await db.set_fulfil(oid, stage="cancelled")
     await db.fulfil_say(oid, "system", f"Cancelled and refunded. {reason}".strip())
     await _refund(bot, o, reason or "it could not be activated")
+    return True
+
+
+async def fulfil_close(bot: Bot, oid: int, reason: str) -> bool:
+    """Close a manual order and keep the money. The sibling of `fulfil_cancel`.
+
+    For the orders a refund is the wrong answer to: a buyer who supplied a
+    number that isn't theirs, one who went silent for a week, an order already
+    settled off the books. `reason` is required by the caller rather than
+    defaulted, because this is the one action here that costs the buyer money
+    and "why" is the only thing they can be told.
+    """
+    o = await db.order(oid)
+    f = await db.fulfilment(oid)
+    if not o or not f or o["status"] == "delivered":
+        return False
+    if f["stage"] not in db.OPEN_STAGES:      # already closed by someone else
+        return False
+    # Written off, not paid back — but the figure still goes in the transcript,
+    # because zeroing the column destroys the only record that it existed.
+    kept = round(float(o["amount"] or 0) + await db.forfeit_balance(oid), 2)
+    await db.set_fulfil(oid, stage="closed")
+    await db.set_order(oid, status="cancelled")
+    await db.fulfil_say(
+        oid, "system", f"Closed without a refund — {cfg.money(kept)} kept. {reason}".strip())
+    log.info("order %s closed with no refund (%s kept): %s", oid, kept, reason)
+    await _safe(bot, o["user_id"],
+                await texts.t("fulfil_closed", oid=o["code"] or oid,
+                              reason=_esc(reason)),
+                reply_markup=k.home_kb())
     return True
 
 

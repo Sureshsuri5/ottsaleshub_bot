@@ -100,7 +100,33 @@ async def main():
         print(ok((await r.json())["stock"]==2),"stock added ->",await db.stock_count(pid))
         r=await s.patch(f"{B}/api/admin/product/{pid}",headers=D,json={"price":99,"sold_count":9999})
         p=await r.json(); print(ok(p["price"]==99 and p["sold_count"]!=9999),"field allowlist -> price",p["price"],"sold",p["sold_count"])
-        # 14. static files
+        # 14. manual order: closing without a refund keeps the money, and the
+        # buyer must never be left worse off by accident — so an unexplained
+        # close is refused, and the held wallet share cannot come back later.
+        moid=await db.create_order(user_id=42,product_id=None,product_name="Manual",
+            qty=1,amount=300.0,balance_used=200.0,provider="upi",
+            status="fulfilling",kind="purchase")
+        await db.open_fulfilment(moid,42)
+        r=await s.post(f"{B}/api/admin/fulfil/{moid}",headers=D,json={"action":"close"})
+        print(ok(r.status==400),"close without a reason refused ->",r.status)
+        before=(await db.get_user(42))["balance"]
+        r=await s.post(f"{B}/api/admin/fulfil/{moid}",headers=D,
+                       json={"action":"close","reason":"number was not yours"})
+        mo=await db.order(moid)
+        print(ok(r.status==200 and mo["status"]=="cancelled"
+                 and (await db.get_user(42))["balance"]==before),
+              "closed with no refund ->",mo["status"])
+        print(ok(float(mo["balance_used"] or 0)==0),
+              "held wallet share written off, not left for the pruner ->",mo["balance_used"])
+        r=await s.post(f"{B}/api/admin/fulfil/{moid}",headers=D,
+                       json={"action":"close","reason":"again"})
+        print(ok(r.status==409),"second close refused ->",r.status)
+        # a maker must not reach it — money stays the shop owner's decision
+        _maker=open("webapp.py",encoding="utf-8").read() \
+            .split("async def maker_action")[1].split("\nasync def ")[0]
+        print(ok('act == "close"' not in _maker and 'act == "cancel"' not in _maker),
+              "makers cannot close or cancel an order")
+        # 15. static files
         for path in ("/","/admin","/static/app.css","/static/tg.js"):
             r=await s.get(f"{B}{path}"); print(ok(r.status==200),f"serve {path} ->",r.status)
     await runner.cleanup(); await db.close()

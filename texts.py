@@ -212,6 +212,12 @@ MESSAGES: dict[str, Msg] = {
         "{product} is activated and ready to use.{note}\n\n"
         "<i>Thanks for your patience — enjoy!</i>",
         "Manual order: completed", "Fulfilment", ("oid", "product", "note")),
+    "fulfil_closed": Msg(
+        "{{m_warn}} <b>Order #{oid} closed</b>\n\n"
+        "{reason}\n\n"
+        "<i>No refund has been issued for this order. If you believe that is a "
+        "mistake, contact support and quote the order number.</i>",
+        "Manual order: closed without a refund", "Fulfilment", ("oid", "reason")),
     "fulfil_nudge_number": Msg(
         "{{m_box}} <b>Still waiting — order #{oid}</b>\n\n"
         "We need the number to activate before we can continue. "

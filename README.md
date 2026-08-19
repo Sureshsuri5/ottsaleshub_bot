@@ -216,6 +216,11 @@ current one is a QR photo or when Telegram rejects an identical edit.
 - **Stock** — paste lines or upload a `.txt`, export unsold stock, purge sold rows
 - **👤 Users** — look up by ID or @username, credit/debit balance, ban/unban, order history
 - **🧾 Reviews** — approve or reject manually-submitted UPI payments in one tap
+- **🏭 Manual** — one conversation thread per order needing hand-fulfilment.
+  Three ways out: **Mark complete**, **Cancel & refund** (everything goes back to
+  the buyer's wallet), or **Cancel, no refund** (the shop keeps the payment). The
+  last one requires a typed reason, which the buyer is sent verbatim, and the
+  amount written off is recorded in the thread.
 - **📣 Broadcast** — rate-limited send to all non-banned users
 - **⚙️ Settings** — edit the welcome and support texts without redeploying
 

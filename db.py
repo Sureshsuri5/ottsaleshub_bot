@@ -1202,6 +1202,27 @@ async def release_balance(oid: int) -> float:
     return used
 
 
+async def forfeit_balance(oid: int) -> float:
+    """Clear a held wallet share *without* paying it back.
+
+    The counterpart to `release_balance`, for an order closed deliberately with
+    the money kept. Zeroing matters as much here as it does on a refund, but
+    for the opposite reason: `prune_dead_orders()` sweeps cancelled orders that
+    still hold `balance_used` and hands the money back weeks later. Leaving the
+    column set would quietly turn a no-refund cancellation into a partial
+    refund long after anyone was watching.
+
+    Returns what was written off, so the caller can record the figure — the
+    column is the only place it was stored, and this erases it.
+    """
+    o = await q1("SELECT balance_used FROM orders WHERE id = ?", (oid,))
+    used = float(o["balance_used"] or 0) if o else 0.0
+    if used < 0.01:
+        return 0.0
+    await ex("UPDATE orders SET balance_used = 0 WHERE id = ?", (oid,))
+    return used
+
+
 async def next_deriv_index() -> int:
     """Hand out the next HD derivation index, once and only once.
 

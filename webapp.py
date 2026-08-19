@@ -1213,6 +1213,16 @@ async def adm_fulfil_action(request):
     elif act == "cancel":
         if not await delivery.fulfil_cancel(bot, oid, str(d.get("reason", "")).strip()):
             return web.json_response({"error": "Already closed."}, status=409)
+    elif act == "close":
+        # The reason is mandatory here and optional on `cancel`: this is the
+        # path that keeps the buyer's money, so it is the one where an
+        # unexplained close is worth refusing outright.
+        reason = str(d.get("reason", "")).strip()
+        if not reason:
+            return web.json_response(
+                {"error": "Give a reason — the buyer is told it."}, status=400)
+        if not await delivery.fulfil_close(bot, oid, reason[:300]):
+            return web.json_response({"error": "Already closed."}, status=409)
     else:
         return web.json_response({"error": "Unknown action."}, status=400)
 

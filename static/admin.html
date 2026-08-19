@@ -861,6 +861,7 @@ const STAGE = {
   working:         ['Your turn',    'ok'],
   done:            ['Complete',     'ok'],
   cancelled:       ['Refunded',     'bad'],
+  closed:          ['Closed',       'bad'],
 };
 
 function fulfilView(closed = false, counts = null) {
@@ -920,11 +921,15 @@ function threadView(oid) {
     loading();
     let d = await api(`/admin/fulfil/${oid}`);
     let draft = '';
+    // The reason box is deliberately a second step rather than a dialog:
+    // Telegram's popups cannot take typed input, and this is the one action
+    // that costs the buyer money, so it should not be one tap away either.
+    let closing = false, closeDraft = '';
 
     const paint = () => {
       const f = d.fulfilment, o = d.order || {};
       const [label, tone] = STAGE[f.stage] || [f.stage, ''];
-      const open = !['done', 'cancelled'].includes(f.stage);
+      const open = !['done', 'cancelled', 'closed'].includes(f.stage);
       html(`
         <h1>#${esc(o.code || oid)}</h1>
         <p class="sub">${esc(o.product_name || '')} × ${o.qty || 1}
@@ -969,7 +974,18 @@ function threadView(oid) {
               '<button class="ghost mini" id="otp">🔑 Request OTP</button>'}
             <button class="ghost mini" id="done">✅ Mark complete</button>
             <button class="ghost mini danger-text" id="cancel">↩ Cancel & refund</button>
-          </div>`
+            <button class="ghost mini danger-text" id="close">✖ Cancel, no refund</button>
+          </div>
+          ${closing ? `
+            <div class="card" style="margin-top:10px">
+              <label>Why is this being closed?</label>
+              <div class="row"><input id="closeReason"
+                placeholder="e.g. the number given was not yours">
+                <button class="mini danger-text" id="closeGo">Close</button></div>
+              <p class="muted small" style="margin-top:8px">The buyer is sent this
+                wording and keeps no refund. ${o.amount
+                  ? 'The shop keeps ' + esc(money(o.amount)) + '.' : ''}</p>
+            </div>` : ''}`
         : `<p class="sub" style="margin-top:14px">This order is closed.</p>`}`);
 
       const t = view.querySelector('#thread');
@@ -980,10 +996,14 @@ function threadView(oid) {
       // through writing is the fastest way to stop trusting the button.
       const box = view.querySelector('#msg');
       if (box && draft) { box.value = draft; }
+      const rbox = view.querySelector('#closeReason');
+      if (rbox) { rbox.value = closeDraft; rbox.focus(); }
 
       const reload = async (quiet) => {
         const el = view.querySelector('#msg');
         draft = el ? el.value : draft;
+        const rl = view.querySelector('#closeReason');
+        closeDraft = rl ? rl.value : closeDraft;
         try {
           d = await api(`/admin/fulfil/${oid}`);
           paint();
@@ -997,6 +1017,9 @@ function threadView(oid) {
           d = await api(`/admin/fulfil/${oid}`, { method: 'POST', body: bodyObj });
           // the message is away — the draft it came from must not come back
           if (bodyObj.action === 'send') draft = '';
+          // Only on the way out: if the close is rejected the reason stays put
+          // rather than making the operator retype it.
+          if (bodyObj.action === 'close') { closing = false; closeDraft = ''; }
           toast(okMsg); paint();
         } catch (e) { toast(e.message || 'Failed', 'err'); }
       };
@@ -1019,6 +1042,21 @@ function threadView(oid) {
         'Cancel and refund?',
         'The full amount goes back to the buyer\u2019s wallet balance.',
         () => act({ action: 'cancel' }, 'Refunded')));
+      on('#close', 'click', () => { closing = !closing; paint(); });
+      on('#closeReason', 'keydown', (e) => {
+        if (e.key === 'Enter') view.querySelector('#closeGo').click();
+      });
+      on('#closeGo', 'click', () => {
+        const el = view.querySelector('#closeReason');
+        const reason = el.value.trim();
+        if (!reason) return toast('Give a reason first', 'err');
+        closeDraft = reason;
+        confirmDelete(
+          'Close without refunding?',
+          'The buyer keeps nothing back and is sent your reason. '
+            + 'This cannot be undone from here.',
+          () => act({ action: 'close', reason }, 'Closed, no refund'));
+      });
     };
     paint();
   });
