@@ -126,7 +126,18 @@ async def main():
             .split("async def maker_action")[1].split("\nasync def ")[0]
         print(ok('act == "close"' not in _maker and 'act == "cancel"' not in _maker),
               "makers cannot close or cancel an order")
-        # 15. static files
+        # 15. active-user count tracks the 30-day window Telegram measures
+        await db.upsert_user(4242,"lurker","Lurker")
+        await db.ex("UPDATE users SET last_seen = datetime('now','-45 days') "
+                    "WHERE tg_id = ?",(4242,))
+        r=await s.get(f"{B}/api/admin/stats",headers=D); st=await r.json()
+        print(ok(st["mau"]<st["users"]),
+              f"30-day active excludes a dormant user -> {st['mau']} of {st['users']}")
+        await db.upsert_user(4242,"lurker","Lurker")
+        r=await s.get(f"{B}/api/admin/stats",headers=D); st2=await r.json()
+        print(ok(st2["mau"]==st["mau"]+1),
+              f"touching the bot counts them again -> {st2['mau']}")
+        # 16. static files
         for path in ("/","/admin","/static/app.css","/static/tg.js"):
             r=await s.get(f"{B}{path}"); print(ok(r.status==200),f"serve {path} ->",r.status)
     await runner.cleanup(); await db.close()

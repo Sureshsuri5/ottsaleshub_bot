@@ -513,11 +513,24 @@ async def _migrate() -> None:
         "ALTER TABLE fulfilment ADD COLUMN needs_otp INTEGER NOT NULL DEFAULT 1",
         # the second detail, when a product needs two (e.g. email then a link)
         "ALTER TABLE fulfilment ADD COLUMN extra TEXT NOT NULL DEFAULT ''",
+        # when this person last touched the bot, for the 30-day active count.
+        # Telegram measures the same thing on the bot's profile card, so this
+        # is the private version of the number it decides whether to show.
+        "ALTER TABLE users ADD COLUMN last_seen TEXT",
     ):
         try:
             await ex(stmt)
         except Exception:
             pass                       # already applied
+
+    # Seed last_seen from created_at rather than leaving it null. Signing up is
+    # itself a sighting, so this is true rather than merely convenient: users
+    # who joined over 30 days ago and never returned stay outside the window,
+    # which is exactly where they belong.
+    try:
+        await ex("UPDATE users SET last_seen = created_at WHERE last_seen IS NULL")
+    except Exception:
+        pass
 
     # anyone who already transacted counts as activated
     try:
@@ -605,10 +618,14 @@ async def ex(sql: str, args: Sequence[Any] = ()) -> int:
 
 # ---------------------------------------------------------------- users
 async def upsert_user(tg_id: int, username: str | None, first_name: str | None) -> aiosqlite.Row:
+    # last_seen rides along on a write that already happens on every update, so
+    # the active-user count costs nothing extra — no separate query, no throttle.
     await ex(
-        """INSERT INTO users (tg_id, username, first_name) VALUES (?, ?, ?)
+        """INSERT INTO users (tg_id, username, first_name, last_seen)
+           VALUES (?, ?, ?, datetime('now'))
            ON CONFLICT(tg_id) DO UPDATE SET username = excluded.username,
-                                            first_name = excluded.first_name""",
+                                            first_name = excluded.first_name,
+                                            last_seen = excluded.last_seen""",
         (tg_id, username, first_name),
     )
     return await q1("SELECT * FROM users WHERE tg_id = ?", (tg_id,))
@@ -1630,6 +1647,11 @@ async def stats() -> dict:
         "SELECT "
         "(SELECT COUNT(*) FROM users) users, "
         "(SELECT COUNT(*) FROM users WHERE is_banned = 1) banned, "
+        # The same window Telegram uses on the bot's profile card: anyone who
+        # touched the bot in the last 30 days. Ours counts private chats only,
+        # so it reads a little lower than the figure Telegram publishes.
+        "(SELECT COUNT(*) FROM users WHERE last_seen > datetime('now', '-30 days')) mau, "
+        "(SELECT COUNT(*) FROM users WHERE last_seen > datetime('now', '-7 days')) wau, "
         "(SELECT COUNT(*) FROM orders WHERE status = 'delivered') orders, "
         f"(SELECT {money} FROM orders WHERE status = 'delivered' "
         "  AND kind = 'purchase') rev_all, "

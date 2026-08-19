@@ -147,7 +147,9 @@ function homeView() {
 
       <div class="row" style="gap:10px">
         <div class="card grow"><div class="tiny muted">Users</div>
-          <div class="num" style="font-size:22px;font-weight:700">${s.users}</div></div>
+          <div class="num" style="font-size:22px;font-weight:700">${s.users}</div>
+          <div class="tiny muted" style="margin-top:2px">
+            <span class="num">${s.mau ?? 0}</span> active · 30d</div></div>
         <div class="card grow"><div class="tiny muted">Open orders</div>
           <div class="num" style="font-size:22px;font-weight:700;
             color:${s.pending ? 'var(--amber)' : 'inherit'}">${s.pending}</div></div>
