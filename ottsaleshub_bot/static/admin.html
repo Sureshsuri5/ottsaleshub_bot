@@ -1,0 +1,1787 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Admin</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="stylesheet" href="/static/app.css">
+<script>
+/* Classic (non-module) script, loaded first on purpose: a syntax error inside a
+   module aborts before any module code runs, so only a listener registered out
+   here can report it. Without this the page just goes blank. */
+(function () {
+  var shown = false;
+  function fatal(msg, where) {
+    if (shown) return;
+    shown = true;
+    var v = document.getElementById('view');
+    if (!v) return;
+    v.innerHTML =
+      '<div class="empty"><b>This screen failed to load</b>' +
+      '<div style="text-align:left;font-family:ui-monospace,monospace;font-size:12px;' +
+      'margin-top:12px;padding:12px;border-radius:10px;background:rgba(229,72,77,.12);' +
+      'color:#E5484D;word-break:break-word">' + String(msg) +
+      (where ? '<br><br>' + where : '') + '</div>' +
+      '<div style="margin-top:14px;font-size:13px">Send this text to whoever maintains ' +
+      'the bot — it names the exact file and line.</div></div>';
+  }
+  window.addEventListener('error', function (e) {
+    fatal(e.message, (e.filename || '') + (e.lineno ? ':' + e.lineno : ''));
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    fatal((e.reason && e.reason.message) || e.reason, 'unhandled promise');
+  });
+  window.__buildStamp = '20260802-1521';
+})();
+</script>
+
+</head>
+<body>
+<div class="wrap" id="view"></div>
+
+<nav class="tabs">
+  <button data-tab="home"    class="sel"><span>📊</span>Today</button>
+  <button data-tab="catalog"><span>📦</span>Catalog</button>
+  <button data-tab="orders"><span>🧾</span>Orders</button>
+  <button data-tab="users"><span>👤</span>Users</button>
+  <button data-tab="more"><span>⚙️</span>More</button>
+</nav>
+
+<script type="module">
+import { tg, boot, api, toast, copy, haptic, esc, money, setSymbol, gauge, inTelegram,
+         statusPill, pushScreen, replaceScreen, refresh,
+         claimLoginLink, session } from '/static/tg.js';
+
+boot();
+const view = document.getElementById('view');
+let me = null, threshold = 3;
+const html = (s) => { view.innerHTML = s; };
+
+/* Open-order count on the Orders tab. Painted from whichever screen last
+   fetched it, so it stays current without a poll of its own. */
+function paintOrderBadge(n) {
+  const b = document.querySelector('.tabs button[data-tab="orders"]');
+  if (!b) return;
+  b.querySelector('.tabbadge')?.remove();
+  if (!n) return;
+  const el = document.createElement('span');
+  el.className = 'tabbadge';
+  el.textContent = n > 99 ? '99+' : n;
+  b.appendChild(el);
+}
+const loading = () => html('<div class="skeleton"></div>'.repeat(4));
+const on = (sel, ev, fn) => view.querySelector(sel)?.addEventListener(ev, fn);
+
+document.querySelectorAll('.tabs button').forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('sel', x === b));
+    haptic();
+    ({ home: homeView, catalog: catalogView, orders: ordersView,
+       users: usersView, more: moreView })[b.dataset.tab]();
+  };
+});
+
+async function init() {
+  loading();
+  try {
+    await claimLoginLink();
+    me = await api('/me');
+    setSymbol(me.symbol);
+    if (!me.admin) throw new Error('This account is not an admin.');
+    homeView();
+  } catch (e) {
+    // Lead with what actually went wrong. The old text explained the token
+    // route regardless of the cause, so a signed-in admin whose id simply
+    // wasn't listed was told to go and edit .env — advice for a different
+    // problem entirely.
+    const browser = !inTelegram();
+    const msg = e.message || 'Something went wrong.';
+    const notAdmin = /not an admin/i.test(msg);
+    // In a browser with no session, offer a sign-in form rather than an error.
+    // An admin arriving at the panel wants a way in, not an explanation.
+    if (browser && !session.get()) return signInForm();
+    html(`<div class="empty">
+      <b>${notAdmin ? 'Not an admin account' : browser ? "Can't open the panel" : 'No access'}</b>
+      ${esc(msg)}
+      ${notAdmin
+        ? `<br><br>Add this account's Telegram id to <code>ADMIN_IDS</code>,
+           or open the panel with
+           <code>?token=YOUR_ADMIN_PANEL_TOKEN</code> in the URL.`
+        : browser
+          ? `<br><br>Open it from the bot in Telegram, or add
+             <code>?token=YOUR_ADMIN_PANEL_TOKEN</code> to this URL.`
+          : ''}
+    </div>`);
+  }
+}
+
+/* ------------------------------------------------------------------ today */
+function homeView() {
+  replaceScreen(async () => {
+    loading();
+    const s = await api('/admin/stats');
+    threshold = s.threshold;
+    paintOrderBadge((s.counts || {}).open);
+    const peak = Math.max(1, ...s.series.map((d) => d.s));
+    html(`
+      <h1>Today</h1>
+      <p class="sub">${esc(me.shop)}</p>
+      <button id="dashbtn" class="ghost" style="margin-bottom:8px">
+        Dashboard — revenue, most sold, top buyers →</button>
+      <button id="profitbtn" class="ghost" style="margin-bottom:12px">
+        Profit — revenue minus cost price →</button>
+
+      <div class="card">
+        <div class="tiny muted">Revenue today</div>
+        <div class="num" style="font-size:32px;font-weight:700;letter-spacing:-.02em">
+          ${money(s.rev_today)}</div>
+        <div class="small muted">${money(s.rev_all)} all time · ${s.orders} delivered</div>
+        <div class="row" style="gap:3px;height:44px;align-items:flex-end;margin-top:14px">
+          ${s.series.map((d) => `<div title="${d.d}: ${money(d.s)}" style="flex:1;
+            height:${Math.max(4, (d.s / peak) * 100)}%;background:var(--jade);
+            border-radius:2px;opacity:${d.s ? 1 : .25}"></div>`).join('') ||
+            '<span class="small muted">No sales in the last 14 days</span>'}
+        </div>
+      </div>
+
+      <div class="row" style="gap:10px">
+        <div class="card grow"><div class="tiny muted">Users</div>
+          <div class="num" style="font-size:22px;font-weight:700">${s.users}</div>
+          <div class="tiny muted" style="margin-top:2px">
+            <span class="num">${s.mau ?? 0}</span> active · 30d</div></div>
+        <div class="card grow"><div class="tiny muted">Open orders</div>
+          <div class="num" style="font-size:22px;font-weight:700;
+            color:${s.pending ? 'var(--amber)' : 'inherit'}">${s.pending}</div></div>
+        <div class="card grow"><div class="tiny muted">Stock units</div>
+          <div class="num" style="font-size:22px;font-weight:700">${s.in_stock}</div></div>
+      </div>
+
+      ${(s.alerts?.withdrawals || s.alerts?.reviews) ? `
+        <h2>Needs you</h2>
+        ${s.alerts.withdrawals ? `
+          <div class="card" data-go="wd" role="button" tabindex="0"
+               style="border-color:var(--amber)">
+            <div class="between">
+              <b>💸 ${s.alerts.withdrawals} withdrawal request${
+                s.alerts.withdrawals === 1 ? '' : 's'}</b>
+              <span class="num">${money(s.alerts.withdraw_total)}</span>
+            </div>
+            <div class="small muted" style="margin-top:4px">Tap to review and pay out</div>
+          </div>` : ''}
+        ${s.alerts.reviews ? `
+          <div class="card" data-go="reviews" role="button" tabindex="0"
+               style="border-color:var(--amber)">
+            <div class="between"><b>🔎 ${s.alerts.reviews} payment${
+              s.alerts.reviews === 1 ? '' : 's'} awaiting review</b>
+              <span class="muted">›</span></div>
+          </div>` : ''}` : ''}
+
+      ${s.low.length ? `
+        <h2>Running low</h2>
+        ${s.low.map((p) => `<div class="card">
+          <div class="between"><b class="trunc">${esc(p.name)}</b>
+            <span class="num" style="color:${p.c ? 'var(--amber)' : 'var(--rose)'}">${p.c}</span></div>
+          ${gauge(p.c, 0, threshold)}
+        </div>`).join('')}` : ''}`);
+    on('#dashbtn', 'click', () => { haptic(); dashView(); });
+    on('#profitbtn', 'click', () => { haptic(); profitView(); });
+    view.querySelector('[data-go="wd"]')?.addEventListener('click', withdrawalsView);
+    view.querySelector('[data-go="reviews"]')?.addEventListener('click',
+      () => ordersView('open'));
+  });
+}
+
+/* ----------------------------------------------------------- withdrawals */
+function withdrawalsView() {
+  pushScreen(async () => {
+    loading();
+    const { pending } = await api('/admin/withdrawals');
+    if (!pending.length) {
+      return html(`<h1>Withdrawals</h1>
+        <div class="empty"><b>Nothing waiting</b>Requests appear here the moment a
+        user asks to cash out.</div>`);
+    }
+    html(`<h1>Withdrawals</h1>
+      <p class="sub">${pending.length} waiting. The amount is held, not yet deducted —
+        it comes off their balance only when you mark it paid.</p>
+      ${pending.map((w) => `
+        <div class="card">
+          <div class="between">
+            <b class="num">${money(w.amount)}</b>
+            <span class="pill wait">${esc(w.method)}</span>
+          </div>
+          <div class="small muted" style="margin-top:6px">
+            ${esc(w.name)} ${w.username ? '@' + esc(w.username) : ''}
+            · <span class="num">${w.user_id}</span>
+            · balance ${money(w.balance)}
+          </div>
+          <div class="keys" style="margin-top:8px">${esc(w.address)}</div>
+          <div class="row" style="gap:8px;margin-top:10px">
+            <button class="mini" data-act="paid" data-id="${w.id}">Mark paid</button>
+            <button class="ghost mini" data-act="rejected" data-id="${w.id}">Reject</button>
+            <button class="ghost mini" data-cp="${esc(w.address)}">Copy address</button>
+          </div>
+        </div>`).join('')}`);
+
+    view.querySelectorAll('[data-cp]').forEach((b) =>
+      b.onclick = () => copy(b.dataset.cp, 'Address copied'));
+    view.querySelectorAll('[data-act]').forEach((b) => b.onclick = async () => {
+      const paying = b.dataset.act === 'paid';
+      confirmDelete(paying ? 'Mark this payout as sent?' : 'Reject this request?',
+        paying ? 'The amount comes off their balance now. Send the funds first.'
+               : 'Their balance is left untouched and the hold is released.',
+        async () => {
+          b.disabled = true;
+          try {
+            await api('/admin/withdrawals', { method: 'POST',
+              body: { id: Number(b.dataset.id), action: b.dataset.act } });
+            toast(paying ? 'Marked paid' : 'Rejected');
+            refresh();
+          } catch (e) { toast(e.message, 'err'); b.disabled = false; }
+        });
+    });
+  });
+}
+
+/* ---------------------------------------------------------------- catalog */
+function catalogView() {
+  replaceScreen(async () => {
+    loading();
+    const cats = await api('/admin/catalog');
+    html(`
+      <h1>Catalog</h1>
+      <p class="sub">Tap a product to edit it or add stock.</p>
+      ${cats.map((c) => `
+        <div class="between" style="margin:20px 0 8px">
+          <h2 style="margin:0">${esc(c.name)}</h2>
+          <div class="row">
+            <button class="ghost mini" data-addp="${c.id}">+ Product</button>
+            <button class="ghost mini" data-delc="${c.id}" aria-label="Delete category">🗑</button>
+          </div>
+        </div>
+        ${c.products.length ? c.products.map((p) => `
+          <div class="card" data-p="${p.id}" role="button" tabindex="0">
+            <div class="between">
+              <div class="grow trunc">
+                <b>${esc(p.emoji || '')} ${esc(p.name)}</b>
+                ${p.is_active ? '' : '<span class="pill neutral">Hidden</span>'}
+              </div>
+              <span class="num">${money(p.price)}</span>
+            </div>
+            ${gauge(p.stock, p.infinite, threshold)}
+            <div class="between small muted" style="margin-top:6px">
+              <span>${p.infinite ? 'Unlimited' : `${p.stock} in stock`}</span>
+              <span class="num">${p.sold_count} sold</span>
+            </div>
+          </div>`).join('')
+          : `<div class="card small muted">No products here yet.</div>`}
+      `).join('')}
+      <label>New category</label>
+      <div class="row"><input id="newcat" placeholder="e.g. Ebooks">
+        <button class="mini" id="addcat">Add</button></div>`);
+
+    view.querySelectorAll('[data-p]').forEach((el) =>
+      el.onclick = () => productView(Number(el.dataset.p)));
+    view.querySelectorAll('[data-addp]').forEach((el) =>
+      el.onclick = (e) => { e.stopPropagation(); newProduct(Number(el.dataset.addp)); });
+    view.querySelectorAll('[data-delc]').forEach((el) =>
+      el.onclick = (e) => { e.stopPropagation(); confirmDelete(
+        'Delete this category?', 'Its products and all their stock go too.',
+        async () => { await api(`/admin/category/${el.dataset.delc}`, { method: 'DELETE' });
+                      toast('Category deleted'); catalogView(); }); });
+    on('#addcat', 'click', async () => {
+      const name = view.querySelector('#newcat').value.trim();
+      try { await api('/admin/category', { method: 'POST', body: { name } });
+            toast('Category added'); catalogView(); }
+      catch (e) { toast(e.message, 'err'); }
+    });
+  });
+}
+
+function newProduct(cid) {
+  pushScreen(() => {
+    html(`<h1>New product</h1><p class="sub">You can add stock right after saving.</p>
+      <label>Name</label><input id="n" placeholder="Python Masterclass">
+      <label>Description</label><textarea id="d" style="min-height:70px"
+        placeholder="What the buyer receives"></textarea>
+      <label>Price (${esc(me.currency)})</label><input id="p" inputmode="decimal" placeholder="249">
+      <button id="save" style="margin-top:14px">Save product</button>`);
+    on('#save', 'click', async (e) => {
+      e.target.disabled = true;
+      try {
+        const r = await api('/admin/product', { method: 'POST', body: {
+          category_id: cid, name: view.querySelector('#n').value.trim(),
+          description: view.querySelector('#d').value.trim(),
+          price: view.querySelector('#p').value } });
+        toast('Product saved');
+        productView(r.id);
+      } catch (err) { toast(err.message, 'err'); e.target.disabled = false; }
+    });
+  });
+}
+
+function productView(pid) {
+  pushScreen(async () => {
+    loading();
+    const cats = await api('/admin/catalog');
+    const p = cats.flatMap((c) => c.products).find((x) => x.id === pid);
+    if (!p) return toast('Product is gone', 'err');
+
+    html(`
+      <h1>${esc(p.name)}</h1>
+      <p class="sub num">id ${p.id} · ${p.sold_count} sold</p>
+
+      <div class="card">
+        ${gauge(p.stock, p.infinite, threshold)}
+        <div class="between small" style="margin-top:8px">
+          <span class="muted">${p.infinite ? 'Unlimited delivery' : `${p.stock} units ready`}</span>
+          <span class="pill ${p.is_active ? 'ok' : 'neutral'}">${p.is_active ? 'Live' : 'Hidden'}</span>
+        </div>
+      </div>
+
+      <label>Name</label><input id="n" value="${esc(p.name)}">
+      <label>Description</label><textarea id="d" style="min-height:70px">${esc(p.description)}</textarea>
+      <label>Price (${esc(me.currency)})</label><input id="pr" inputmode="decimal" value="${p.price}">
+      <div class="row" style="gap:8px">
+        <div style="flex:0 0 90px">
+          <label>Emoji</label>
+          <input id="em" value="${esc(p.emoji || '')}" placeholder="🎬">
+        </div>
+        <div class="grow">
+          <label>Premium icon id</label>
+          <input id="ic" value="${esc(p.icon_emoji_id || '')}" inputmode="numeric"
+                 placeholder="send /ids to the bot to find one">
+        </div>
+        <div style="flex:0 0 110px">
+          <label>Price unit</label>
+          <input id="un" value="${esc(p.unit || '')}" placeholder="code">
+        </div>
+      </div>
+      <button id="save" style="margin-top:12px">Save changes</button>
+      <button class="ghost" id="vis" style="margin-top:8px">
+        ${p.is_active ? 'Hide from shop' : 'Show in shop'}</button>
+
+      <label class="tog" style="margin-top:14px">
+        <span><b>Manual activation</b>
+          <div class="hint">Buyer is asked for a number and OTP; you finish the
+            order from Fulfilment. No stock is used.</div></span>
+        <input type="checkbox" id="manual" ${p.manual ? 'checked' : ''}>
+      </label>
+
+      ${p.manual ? `
+        <label style="margin-top:14px">Ask the buyer for</label>
+        <select id="askfor">
+          <option value="number" ${p.ask_for !== 'email' && p.ask_for !== 'link'
+            && p.ask_for !== 'email_link' ? 'selected' : ''}>Phone number</option>
+          <option value="email" ${p.ask_for === 'email' ? 'selected' : ''}>
+            Email address</option>
+          <option value="link" ${p.ask_for === 'link' ? 'selected' : ''}>
+            Link</option>
+          <option value="email_link" ${p.ask_for === 'email_link' ? 'selected' : ''}>
+            Email, then link</option>
+        </select>
+        <div class="hint">What the buyer is asked for after paying. Only
+          affects new orders.</div>
+
+        <label class="tog" style="margin-top:14px">
+          <span><b>Needs a code</b>
+            <div class="hint">Turn off if you can activate from the
+              ${p.ask_for === 'email' ? 'email' : 'number'} alone. The buyer
+              won't be told to expect a code.</div></span>
+          <input type="checkbox" id="needsotp" ${p.needs_otp !== 0 ? 'checked' : ''}>
+        </label>
+
+        <label style="margin-top:14px">Fulfilled by</label>
+        <select id="mksel"><option value="">You (nobody assigned)</option></select>
+        <div class="hint">The maker sees this product's orders in their own
+          panel. Changing it only affects new orders.</div>
+      ` : ''}
+
+      <h2>Stock</h2>
+      ${p.manual ? `
+        <p class="sub">This product is activated by hand, so it has no stock.
+          Paid orders appear under <b>Orders → Fulfilment</b>.</p>
+      ` : p.infinite ? `
+        <label>Everyone receives this</label>
+        <textarea id="static">${esc(p.static_payload)}</textarea>
+        <button id="saveStatic" style="margin-top:8px">Save content</button>
+        <button class="ghost" id="unlimited" style="margin-top:8px">Switch to per-unit stock</button>
+      ` : `
+        <div class="row" style="margin:0 0 14px;gap:8px;flex-wrap:wrap">
+          <button class="ghost mini" id="importBtn">📄 Import .txt</button>
+          <button class="ghost mini danger-text" id="clearStock">🗑 Delete all unsold</button>
+          <button class="ghost mini" id="export">Export unsold</button>
+          <button class="ghost mini" id="purge">Clear sold rows</button>
+          <button class="ghost mini" id="unlimited">Unlimited mode</button>
+        </div>
+
+        <label class="row" style="justify-content:space-between">
+          <span>Add items — one per line, each goes to one buyer</span>
+          <span class="tiny muted" id="linecount"></span>
+        </label>
+        <textarea id="lines" placeholder="KEY-AAAA-1111&#10;KEY-BBBB-2222"></textarea>
+        <button id="addStock" style="margin-top:8px">Add to stock</button>
+        <input type="file" id="importFile" accept=".txt,.csv,text/plain"
+               style="display:none">
+
+        <label style="margin-top:14px">Unsold items</label>
+        <div id="stocklist" class="wallet"><p class="sub">Loading…</p></div>`}
+
+      <button class="danger" id="del" style="margin-top:22px">Delete product</button>`);
+
+    if (p.manual) {
+      on('#needsotp', 'change', async (e) => {
+        await api(`/admin/product/${pid}`, { method: 'PATCH',
+          body: { needs_otp: e.target.checked ? 1 : 0 } });
+        toast(e.target.checked ? 'Will ask for a code' : 'No code needed');
+        refresh();
+      });
+      on('#askfor', 'change', async (e) => {
+        await api(`/admin/product/${pid}`, { method: 'PATCH',
+                                             body: { ask_for: e.target.value } });
+        toast(e.target.value === 'email' ? 'Will ask for an email'
+                                         : 'Will ask for a phone number');
+      });
+      // filled after render: the list is a second request, and blocking the
+      // whole product screen on it would stall the common case where nobody
+      // is looking at the assignment at all
+      api('/admin/makers').then((r) => {
+        const sel = view.querySelector('#mksel');
+        if (!sel) return;
+        (r.makers || []).filter((m) => m.is_active).forEach((m) => {
+          const o = document.createElement('option');
+          o.value = m.id;
+          o.textContent = m.name || m.email;
+          if (Number(p.maker_id) === Number(m.id)) o.selected = true;
+          sel.appendChild(o);
+        });
+        sel.onchange = async () => {
+          await api(`/admin/product/${pid}`, { method: 'PATCH',
+            body: { maker_id: sel.value ? Number(sel.value) : null } });
+          toast(sel.value ? 'Assigned' : 'Unassigned');
+        };
+      }).catch(() => {});
+    }
+
+    on('#manual', 'change', async (e) => {
+      await api(`/admin/product/${pid}`, { method: 'PATCH',
+                                           body: { manual: e.target.checked ? 1 : 0 } });
+      toast(e.target.checked ? 'Manual activation on' : 'Back to stock delivery');
+      refresh();
+    });
+
+    on('#save', 'click', async () => {
+      await api(`/admin/product/${pid}`, { method: 'PATCH', body: {
+        name: view.querySelector('#n').value.trim(),
+        description: view.querySelector('#d').value.trim(),
+        price: view.querySelector('#pr').value,
+        emoji: view.querySelector('#em').value.trim(),
+        icon_emoji_id: view.querySelector('#ic').value.trim(),
+        unit: view.querySelector('#un').value.trim() } });
+      toast('Changes saved'); refresh();
+    });
+    on('#vis', 'click', async () => {
+      await api(`/admin/product/${pid}`, { method: 'PATCH', body: { is_active: !p.is_active } });
+      toast(p.is_active ? 'Hidden from shop' : 'Live in shop'); refresh();
+    });
+    // Listed separately from the add box: this is the only place you can see
+    // what is actually in stock, and remove a single wrong item without
+    // clearing the lot.
+    async function paintStock() {
+      const box = view.querySelector('#stocklist');
+      if (!box) return;
+      try {
+        const r = await api(`/admin/product/${pid}/stock`);
+        const rows = r.rows || [];
+        box.innerHTML = !rows.length
+          ? `<p class="sub">Nothing unsold.${r.sold ? ` ${r.sold} sold.` : ''}</p>`
+          : rows.map((it, i) => `
+              <div class="wcard">
+                <div class="wtop">
+                  <span class="wname">${i + 1}.</span>
+                  <span>
+                    <button class="whide" data-copystock="${esc(it.payload)}"
+                            title="Copy">📋</button>
+                    <button class="whide" data-delstock="${it.id}"
+                            title="Remove">✕</button>
+                  </span>
+                </div>
+                <code class="waddr">${esc(it.payload)}</code>
+              </div>`).join('')
+            + `<p class="sub">${rows.length} unsold${r.sold ? ` · ${r.sold} sold` : ''}</p>`;
+        box.querySelectorAll('[data-copystock]').forEach((b) => b.onclick = () =>
+          copy(b.dataset.copystock, 'Copied'));
+        box.querySelectorAll('[data-delstock]').forEach((b) => b.onclick = () =>
+          confirmDelete('Remove this item?',
+            'It has not been sold, so nobody loses anything.', async () => {
+              await api(`/admin/product/${pid}/stock`, {
+                method: 'POST', body: { delete_id: Number(b.dataset.delstock) } });
+              toast('Removed'); paintStock();
+            }));
+      } catch (e) { box.innerHTML = `<p class="sub">${esc(e.message)}</p>`; }
+    }
+    paintStock();
+
+    // Reads the file in the browser and drops it into the box, so you can see
+    // what you're about to add before committing it — importing straight to
+    // the database gives you no chance to notice a header row or a stray line.
+    // Live count beside the label. Pasting a few hundred lines gives no sense
+    // of how many there are, and the number you're adding is worth knowing
+    // before you commit it — duplicates within the paste are called out too,
+    // since those are silently dropped on save.
+    function countLines() {
+      const el = view.querySelector('#lines');
+      const out = view.querySelector('#linecount');
+      if (!el || !out) return;
+      const lines = el.value.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      const unique = new Set(lines).size;
+      const dupes = lines.length - unique;
+      out.textContent = !lines.length ? ''
+        : `${unique} item${unique === 1 ? '' : 's'}`
+          + (dupes ? ` · ${dupes} duplicate${dupes === 1 ? '' : 's'}` : '');
+    }
+    on('#lines', 'input', countLines);
+    countLines();
+
+    on('#importBtn', 'click', () => view.querySelector('#importFile').click());
+    on('#importFile', 'change', async (ev) => {
+      const file = ev.target.files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      const box = view.querySelector('#lines');
+      const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      box.value = (box.value.trim() ? box.value.trim() + '\n' : '') + lines.join('\n');
+      ev.target.value = '';
+      countLines();
+      toast(`${lines.length} line${lines.length === 1 ? '' : 's'} loaded — check, then add`);
+    });
+
+    on('#addStock', 'click', async (e) => {
+      const lines = view.querySelector('#lines').value;
+      if (!lines.trim()) return toast('Paste at least one line', 'err');
+      e.target.disabled = true;
+      const r = await api(`/admin/product/${pid}/stock`, { method: 'POST', body: { lines } });
+      e.target.disabled = false;
+      view.querySelector('#lines').value = '';
+      countLines();
+      toast(r.skipped
+        ? `${r.added} added · ${r.skipped} duplicate${r.skipped === 1 ? '' : 's'} skipped`
+        : `${r.added} item${r.added === 1 ? '' : 's'} added`,
+        r.added ? 'ok' : 'err');
+      paintStock();
+    });
+    on('#clearStock', 'click', () => confirmDelete(
+      'Delete all unsold stock?',
+      'Every unsold item for this product goes. Sold items and past orders are '
+      + 'untouched. There is no undo — export first if you might need them.',
+      async () => {
+        const r = await api(`/admin/product/${pid}/stock`,
+                            { method: 'POST', body: { clear_unsold: 1 } });
+        toast(`${r.removed} item${r.removed === 1 ? '' : 's'} deleted`);
+        paintStock();
+      }));
+    on('#export', 'click', async () => {
+      const r = await api(`/admin/product/${pid}/stock`);
+      r.items.length ? copy(r.items.join('\n'), `${r.items.length} lines copied`)
+                     : toast('Nothing unsold', 'err');
+    });
+    on('#purge', 'click', async () => {
+      const r = await api(`/admin/product/${pid}/stock`, { method: 'POST', body: { purge: 1 } });
+      toast(`${r.removed} sold rows cleared`);
+    });
+    on('#unlimited', 'click', async () => {
+      await api(`/admin/product/${pid}`, { method: 'PATCH', body: { infinite: !p.infinite } });
+      toast(p.infinite ? 'Now per-unit stock' : 'Unlimited mode on'); refresh();
+    });
+    on('#saveStatic', 'click', async () => {
+      await api(`/admin/product/${pid}`, { method: 'PATCH', body: {
+        static_payload: view.querySelector('#static').value } });
+      toast('Content saved');
+    });
+    on('#del', 'click', () => confirmDelete('Delete this product?',
+      'Its stock is removed with it. Past orders keep their delivered items.',
+      async () => { await api(`/admin/product/${pid}`, { method: 'DELETE' });
+                    toast('Product deleted'); catalogView(); }));
+  });
+}
+
+function signInForm(note) {
+  html(`
+    <h1>Admin sign in</h1>
+    ${note ? `<p class="sub">${esc(note)}</p>` : ''}
+    <label>Email</label>
+    <input id="li_email" type="email" autocomplete="username" placeholder="you@example.com">
+    <label>Password</label>
+    <input id="li_pw" type="password" autocomplete="current-password" placeholder="••••••••••">
+    <button id="li_go" style="margin-top:12px">Sign in</button>
+    <p class="sub" style="margin-top:14px">No password yet? Send
+      <code>/setlogin you@example.com yourpassword</code> to the bot, or
+      <code>/panel</code> for a one-time link.</p>`);
+
+  const go = async () => {
+    const email = view.querySelector('#li_email').value.trim();
+    const password = view.querySelector('#li_pw').value;
+    if (!email || !password) return toast('Email and password, please', 'err');
+    const b = view.querySelector('#li_go');
+    b.disabled = true;
+    try {
+      const r = await fetch('/api/panel/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Sign in failed');
+      session.set(d.session);            // persists until Sign out
+      location.reload();
+    } catch (err) {
+      b.disabled = false;
+      view.querySelector('#li_pw').value = '';
+      toast(err.message, 'err');
+    }
+  };
+  on('#li_go', 'click', go);
+  view.querySelector('#li_pw').addEventListener('keydown',
+    (e) => { if (e.key === 'Enter') go(); });
+}
+
+
+function confirmDelete(title, detail, run) {
+  // Telegram's dialog only works inside a Telegram client. In a browser the
+  // method exists but throws from inside its own cross-origin script, which
+  // the browser reports as a bare "Script error." with no file or line — so
+  // check where we are rather than whether the method is defined.
+  const go = () => Promise.resolve()
+    .then(run)
+    .catch((e) => toast(e.message || 'That failed', 'err'));
+  if (inTelegram() && tg?.showConfirm) {
+    return tg.showConfirm(`${title}\n\n${detail}`, (ok) => ok && go());
+  }
+  if (confirm(`${title}\n\n${detail}`)) go();
+}
+
+// Same dialog, honest name at the call sites that aren't deletions.
+const confirmAction = confirmDelete;
+
+/* ----------------------------------------------------------------- orders */
+
+// One tab row shared by the order lists and the manual queue, so Manual reads
+// as a tab of Orders rather than a separate screen you navigate away into.
+// `unread` shows as a dot rather than a number: the count is on the rows
+// themselves, and what the tab needs to say is only "something is waiting".
+function orderTabs(active, counts = {}) {
+  const tabs = [['open', 'Open'], ['delivered', 'Delivered'],
+                ['manual', 'Manual'], ['all', 'All']];
+  return `<div class="row" style="gap:8px;margin:12px 0;flex-wrap:wrap">
+    ${tabs.map(([t, label]) => {
+      const n = t === 'manual' ? counts.fulfilling : counts[t];
+      const dot = t === 'manual' && counts.fulfil_unread ? ' •' : '';
+      return `<button class="mini ${t === active ? '' : 'ghost'}" data-f="${t}">
+        ${label}${n ? ` (${n})` : ''}${dot}</button>`;
+    }).join('')}
+  </div>`;
+}
+
+function goTab(t, counts) {
+  return t === 'manual' ? fulfilView(false, counts) : ordersView(t);
+}
+
+function ordersView(filter = 'open', term = '') {
+  replaceScreen(async () => {
+    loading();
+    const res = await api(`/admin/orders?status=${filter}`
+      + (term ? `&q=${encodeURIComponent(term)}` : ''));
+    const list = res.orders || res;
+    const counts = res.counts || {};
+    paintOrderBadge(counts.open);
+    html(`
+      <h1>Orders</h1>
+      <input class="search" id="oq" placeholder="Order id, buyer id, product or ref"
+             value="${esc(term)}">
+      ${term ? `<p class="sub">${list.length} result${list.length === 1 ? '' : 's'}
+        for “${esc(term)}” — <a href="#" id="oclear">clear</a></p>`
+        : orderTabs(filter, counts)}
+      ${list.length ? list.map(orderCard).join('')
+        : `<div class="empty"><b>Nothing here</b>Orders appear the moment a buyer starts
+           checkout.</div>`}`);
+
+    view.querySelectorAll('[data-f]').forEach((b) => b.onclick = () => goTab(b.dataset.f, counts));
+    const q = view.querySelector('#oq');
+    // search on Enter rather than per keystroke: each search is a round trip,
+    // and an order id is pasted whole rather than typed a character at a time
+    q?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); ordersView(filter, q.value.trim()); }
+    });
+    on('#oclear', 'click', (e) => { e.preventDefault(); ordersView(filter, ''); });
+    view.querySelectorAll('[data-open]').forEach((c) => c.onclick = (e) => {
+      // the approve/reject buttons live inside the card; a tap on one of those
+      // must not also open the order
+      if (e.target.closest('[data-act]')) return;
+      haptic(); orderView(c.dataset.open);
+    });
+    // Every one of these is irreversible from the buyer's side — goods go out,
+    // or a rejection notice does — and on a phone the two buttons sit side by
+    // side inside a list of near-identical cards. Confirm first, and name the
+    // order in the prompt so a tap on the wrong card is caught here.
+    const ACT = {
+      approve: ['Approve order',
+                'The buyer is sent their items straight away and the order is marked '
+                + 'delivered. This cannot be undone.'],
+      deliver: ['Mark order paid & deliver',
+                'The order is treated as paid without waiting for a reference, the buyer '
+                + 'is sent their items, and stock is consumed. This cannot be undone.'],
+      reject:  ['Reject order',
+                'The buyer is told their payment could not be matched, and any wallet '
+                + 'balance the order was holding is released back to them.'],
+      cancel:  ['Cancel order',
+                'The order is closed without delivering. Any stock it was holding goes '
+                + 'back on the shelf and reserved balance is released.'],
+    };
+    view.querySelectorAll('[data-act]').forEach((b) => b.onclick = () => {
+      const { act, oid } = { act: b.dataset.act, oid: b.dataset.oid };
+      // one button covers both an unpaid order and one awaiting review, and the
+      // two need different wording — the label already distinguishes them
+      const key = act === 'approve' && /paid/i.test(b.textContent) ? 'deliver' : act;
+      const [title, detail] = ACT[key] || [`${act} order`, 'This cannot be undone.'];
+      const name = b.closest('.card')?.querySelector('b')?.textContent.trim() || '';
+      confirmAction(`${title} #${oid}?${name ? `\n${name}` : ''}`, detail, async () => {
+        b.disabled = true;
+        try {
+          const r = await api(`/admin/order/${oid}/${act}`, { method: 'POST' });
+          toast(r.status === 'delivered' ? 'Delivered'
+                : r.status === 'rejected' ? 'Rejected'
+                : r.status === 'cancelled' ? 'Cancelled' : `Now ${r.status}`);
+          ordersView(filter);
+        } catch (e) { b.disabled = false; throw e; }   // confirmAction toasts it
+      });
+    });
+  });
+}
+
+function orderView(id) {
+  pushScreen(async () => {
+    const o = await api('/admin/order?id=' + encodeURIComponent(id));
+    const m = (n) => `${o.currency || ''}${Number(n || 0).toFixed(2)}`;
+    const row = (k, v) => v === null || v === undefined || v === ''
+      ? '' : `<div class="wmeta" style="justify-content:space-between">
+                <span>${k}</span><span>${v}</span></div>`;
+    html(`
+      <h1>Order #${esc(o.code || o.id)}</h1>
+      <div class="wcard">
+        <div class="wtop"><span class="wname">${esc(o.product_name || '—')}
+          <span class="muted small">×${o.qty}</span></span>
+          <span class="wamt">${m(o.amount)}</span></div>
+        <div style="margin-top:8px">${statusPill(o.status)}</div>
+      </div>
+
+      <h2>Details</h2>
+      <div class="wcard">
+        ${row('Order id', '#' + o.id)}
+        ${row('Buyer', o.username ? '@' + esc(o.username)
+                                  : esc(o.first_name || o.user_id))}
+        ${row('User id', `<code class="small">${o.user_id}</code>`)}
+        ${row('Method', esc(o.provider))}
+        ${row('Paid from wallet', o.balance_used > 0 ? m(o.balance_used) : '')}
+        ${row('Received', o.received > 0 ? m(o.received) : '')}
+        ${row('Created', esc(o.created_at_local || o.created_at || ''))}
+        ${row('Paid', esc(o.paid_at_local || o.paid_at || ''))}
+      </div>
+
+      ${o.external_ref ? `
+        <h2>Payment reference</h2>
+        <div class="wcard">
+          <code class="waddr">${esc(o.external_ref)}</code>
+          ${o.explorer ? `<div class="wmeta"><span></span>
+            <a target="_blank" href="${esc(o.explorer)}">View on explorer ↗</a></div>` : ''}
+        </div>` : ''}
+
+      ${o.pay_address ? `
+        <h2>Deposit address</h2>
+        <div class="wcard"><code class="waddr">${esc(o.pay_address)}</code></div>` : ''}
+
+      <h2>Delivered items</h2>
+      ${!o.items.length ? '<p class="sub">Nothing delivered for this order.</p>' : `
+        <div class="wcard">${o.items.map((it, i) =>
+          `<div class="waddr">${i + 1}. ${esc(it)}</div>`).join('')}</div>`}
+
+      <h2>Danger zone</h2>
+      <p class="sub">Deleting removes this order from every figure — profit,
+        revenue, units sold. Any stock it used goes back on the shelf. Wallet
+        balances are left alone. Meant for test orders.</p>
+      <button class="ghost danger-text" id="delorder">🗑 Delete this order</button>
+    `);
+
+    on('#delorder', 'click', () => confirmDelete(
+      'Delete this order permanently?',
+      'It disappears from profit and sales figures, and any stock it consumed '
+      + 'is released. This cannot be undone.',
+      async () => {
+        const r = await api('/admin/order?id=' + encodeURIComponent(id),
+                            { method: 'DELETE' });
+        toast(r.stock_freed ? `Deleted — ${r.stock_freed} item(s) back in stock`
+                            : 'Order deleted');
+        ordersView();
+      }));
+  });
+}
+
+
+const orderCard = (o) => `
+  <div class="card" data-open="${o.id}">
+    <div class="between">
+      <div class="grow trunc"><b>${esc(o.product_name)}</b>
+        <span class="muted small num"> ×${o.qty}</span></div>
+      <span class="num">${money(o.amount)}</span>
+    </div>
+    <div class="between" style="margin-top:8px">
+      ${statusPill(o.status)}
+      <span class="tiny muted num">#${o.id} · ${esc(o.provider)} · ${esc(o.user_id)}</span>
+    </div>
+    ${o.external_ref ? `<div class="small muted num trunc" style="margin-top:6px">
+      ref ${esc(o.external_ref)}</div>` : ''}
+    ${['awaiting_review', 'pending'].includes(o.status) ? `
+      <div class="row" style="gap:8px;margin-top:10px">
+        <button class="mini" data-act="approve" data-oid="${o.id}">
+          ${o.status === 'pending' ? 'Mark paid & deliver' : 'Approve'}</button>
+        <button class="ghost mini" data-act="${o.status === 'pending' ? 'cancel' : 'reject'}"
+          data-oid="${o.id}">${o.status === 'pending' ? 'Cancel' : 'Reject'}</button>
+      </div>
+      ${o.status === 'pending' ? `<div class="tiny muted" style="margin-top:6px">
+        Waiting on the buyer to send payment and submit a reference.</div>` : ''}` : ''}
+  </div>`;
+
+/* ------------------------------------------------------------------ users */
+function usersView(q = '') {
+  replaceScreen(async () => {
+    loading();
+    const list = await api(`/admin/users?q=${encodeURIComponent(q)}`);
+    html(`
+      <h1>Users</h1>
+      <input id="q" placeholder="Search by name, @username or id" value="${esc(q)}">
+      <button class="ghost mini" id="refsBtn" style="margin-top:8px">🤝 Referrers</button>
+      <div style="height:12px"></div>
+      ${list.length ? list.map((u) => `
+        <div class="card" data-u="${u.tg_id}" role="button" tabindex="0">
+          <div class="between">
+            <div class="grow trunc"><b>${esc(u.first_name || 'Unnamed')}</b>
+              <span class="muted small">${u.username ? '@' + esc(u.username) : ''}</span></div>
+            <span class="num">${money(u.balance)}</span>
+          </div>
+          <div class="between small muted" style="margin-top:6px">
+            <span class="num">${u.tg_id}</span>
+            <span>${u.orders} orders · ${money(u.spent)}
+              ${u.is_banned ? '<span class="pill bad">Banned</span>' : ''}</span>
+          </div>
+        </div>`).join('')
+        : `<div class="empty"><b>No match</b>Try a different name or id.</div>`}`);
+
+    let t;
+    on('#q', 'input', (e) => { clearTimeout(t);
+      t = setTimeout(() => usersView(e.target.value), 350); });
+    on('#refsBtn', 'click', () => referrersView());
+    view.querySelectorAll('[data-u]').forEach((el) =>
+      el.onclick = () => userView(Number(el.dataset.u)));
+  });
+}
+
+const STAGE = {
+  awaiting_number: ['Needs number', 'wait'],
+  awaiting_link:   ['Needs link',   'wait'],
+  awaiting_otp:    ['Needs OTP',    'wait'],
+  working:         ['Your turn',    'ok'],
+  done:            ['Complete',     'ok'],
+  cancelled:       ['Refunded',     'bad'],
+  closed:          ['Closed',       'bad'],
+};
+
+function fulfilView(closed = false, counts = null) {
+  replaceScreen(async () => {
+    loading();
+    // the tab row needs the order counts too, so fetch both when arriving here
+    // directly (a refresh, or the back button) rather than via an Orders tab
+    const [d, res] = await Promise.all([
+      api(`/admin/fulfil${closed ? '?closed=1' : ''}`),
+      counts ? Promise.resolve(null) : api('/admin/orders?status=open'),
+    ]);
+    const c = counts || (res && res.counts) || {};
+    const list = d.items || [];
+    html(`
+      <h1>Orders</h1>
+      ${orderTabs('manual', { ...c, fulfilling: d.open, fulfil_unread: d.unread })}
+      <div class="row between" style="margin-bottom:10px">
+        <span class="sub" style="margin:0">${closed ? 'Closed orders.'
+          : `${d.open} open${d.unread ? ` · ${d.unread} unread` : ''}`}</span>
+        <button class="ghost mini" id="tog" style="width:auto">
+          ${closed ? '← Open' : 'Closed'}</button>
+        <button class="ghost mini" id="refreshQueue" style="width:auto">🔄</button>
+      </div>
+      ${list.length ? list.map((f) => {
+        const [label, tone] = STAGE[f.stage] || [f.stage, ''];
+        return `
+        <div class="card" data-o="${f.order_id}" role="button" tabindex="0">
+          <div class="between">
+            <div class="grow trunc"><b>#${esc(f.code || f.order_id)}</b>
+              <span class="muted small">${esc(f.product_name || '')}</span></div>
+            <span class="pill ${tone}">${label}</span>
+          </div>
+          <div class="between small muted" style="margin-top:6px">
+            <span class="trunc">${esc(f.first_name || 'Unnamed')}
+              ${f.username ? '@' + esc(f.username) : ''}
+              ${f.number ? ' · <span class="num">' + esc(f.number) + '</span>' : ''}</span>
+            <span>${f.unread ? '<span class="pill bad">' + f.unread + ' new</span>' : ''}</span>
+          </div>
+        </div>`; }).join('')
+        : `<div class="empty"><b>Nothing here</b>${closed
+             ? 'No closed manual orders yet.'
+             : 'No manual orders waiting. They appear here the moment one is paid for.'}</div>`}`);
+
+    view.querySelectorAll('[data-f]').forEach((b) =>
+      b.onclick = () => goTab(b.dataset.f, c));
+    on('#tog', 'click', () => fulfilView(!closed, c));
+    // refetch counts too, not just the rows: a new order arriving should move
+    // the tab badge as well as the list, otherwise the two disagree
+    on('#refreshQueue', 'click', () => fulfilView(closed, null));
+    view.querySelectorAll('[data-o]').forEach((el) =>
+      el.onclick = () => threadView(Number(el.dataset.o)));
+  });
+}
+
+function threadView(oid) {
+  pushScreen(async () => {
+    loading();
+    let d = await api(`/admin/fulfil/${oid}`);
+    let draft = '';
+    // The reason box is deliberately a second step rather than a dialog:
+    // Telegram's popups cannot take typed input, and this is the one action
+    // that costs the buyer money, so it should not be one tap away either.
+    let closing = false, closeDraft = '';
+
+    const paint = () => {
+      const f = d.fulfilment, o = d.order || {};
+      const [label, tone] = STAGE[f.stage] || [f.stage, ''];
+      const open = !['done', 'cancelled', 'closed'].includes(f.stage);
+      html(`
+        <h1>#${esc(o.code || oid)}</h1>
+        <p class="sub">${esc(o.product_name || '')} × ${o.qty || 1}
+          · <span class="pill ${tone}">${label}</span></p>
+        <div class="card">
+          <div class="between"><span class="muted small">Buyer</span>
+            <span class="trunc">${esc((d.user && d.user.first_name) || 'Unnamed')}
+              ${d.user && d.user.username ? '@' + esc(d.user.username) : ''}</span></div>
+          ${f.extra ? `<div class="between" style="margin-top:10px">
+            <span class="muted small">Link</span>
+            <span class="trunc" style="max-width:60%"><a target="_blank"
+              href="${esc(f.extra)}">${esc(f.extra)}</a></span></div>` : ''}
+          <div class="between" style="margin-top:10px"><span class="muted small">${
+            f.ask_for === 'number' ? 'Number' : 'Email'}</span>
+            <b class="num">${f.number ? esc(f.number) : '—'}</b></div>
+        </div>
+
+        <div class="row between" style="margin-top:14px">
+          <span class="sub" style="margin:0">Conversation</span>
+          <button class="ghost mini" id="refreshThread" style="width:auto">🔄 Refresh</button>
+        </div>
+
+        <div id="thread" class="wallet" style="margin-top:6px">
+          ${(d.messages || []).map((m) => `
+            <div class="between small" style="margin:6px 0;gap:10px">
+              <span class="grow" style="white-space:pre-wrap;${
+                m.sender === 'system' ? 'font-style:italic;opacity:.6'
+                : m.sender === 'user' ? '' : 'text-align:right'}">${
+                m.sender === 'user' ? '👤 '
+                : m.sender === 'maker' ? '🏭 '
+                : m.sender === 'admin' ? '🛠 ' : ''
+                }${esc(m.body)}</span>
+            </div>`).join('') || '<p class="sub">No messages yet.</p>'}
+        </div>
+
+        ${open ? `
+          <label style="margin-top:14px">Message the buyer</label>
+          <div class="row"><input id="msg" placeholder="Type a reply…">
+            <button class="mini" id="send">Send</button></div>
+          <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
+            ${f.needs_otp === false ? '' :
+              '<button class="ghost mini" id="otp">🔑 Request OTP</button>'}
+            <button class="ghost mini" id="done">✅ Mark complete</button>
+            <button class="ghost mini danger-text" id="cancel">↩ Cancel & refund</button>
+            <button class="ghost mini danger-text" id="close">✖ Cancel, no refund</button>
+          </div>
+          ${closing ? `
+            <div class="card" style="margin-top:10px">
+              <label>Why is this being closed?</label>
+              <div class="row"><input id="closeReason"
+                placeholder="e.g. the number given was not yours">
+                <button class="mini danger-text" id="closeGo">Close</button></div>
+              <p class="muted small" style="margin-top:8px">The buyer is sent this
+                wording and keeps no refund. ${o.amount
+                  ? 'The shop keeps ' + esc(money(o.amount)) + '.' : ''}</p>
+            </div>` : ''}`
+        : `<p class="sub" style="margin-top:14px">This order is closed.</p>`}`);
+
+      const t = view.querySelector('#thread');
+      if (t) t.scrollTop = t.scrollHeight;
+
+      // Repainting rebuilds the input, so a half-typed reply would vanish on
+      // every refresh. Carry it across — losing a message you were part-way
+      // through writing is the fastest way to stop trusting the button.
+      const box = view.querySelector('#msg');
+      if (box && draft) { box.value = draft; }
+      const rbox = view.querySelector('#closeReason');
+      if (rbox) { rbox.value = closeDraft; rbox.focus(); }
+
+      const reload = async (quiet) => {
+        const el = view.querySelector('#msg');
+        draft = el ? el.value : draft;
+        const rl = view.querySelector('#closeReason');
+        closeDraft = rl ? rl.value : closeDraft;
+        try {
+          d = await api(`/admin/fulfil/${oid}`);
+          paint();
+          if (!quiet) toast('Up to date');
+        } catch (e) { toast(e.message || 'Could not refresh', 'err'); }
+      };
+      on('#refreshThread', 'click', () => reload(false));
+
+      const act = async (bodyObj, okMsg) => {
+        try {
+          d = await api(`/admin/fulfil/${oid}`, { method: 'POST', body: bodyObj });
+          // the message is away — the draft it came from must not come back
+          if (bodyObj.action === 'send') draft = '';
+          // Only on the way out: if the close is rejected the reason stays put
+          // rather than making the operator retype it.
+          if (bodyObj.action === 'close') { closing = false; closeDraft = ''; }
+          toast(okMsg); paint();
+        } catch (e) { toast(e.message || 'Failed', 'err'); }
+      };
+
+      on('#send', 'click', () => {
+        const el = view.querySelector('#msg');
+        const text = el.value.trim();
+        if (!text) return toast('Write a message', 'err');
+        act({ action: 'send', text }, 'Sent');
+      });
+      on('#msg', 'keydown', (e) => {
+        if (e.key === 'Enter') view.querySelector('#send').click();
+      });
+      on('#otp', 'click', () => act({ action: 'ask_otp' }, 'Asked for the OTP'));
+      on('#done', 'click', () => confirmDelete(
+        'Mark this order complete?',
+        'The buyer is told it is activated, and one-time codes in the transcript are redacted.',
+        () => act({ action: 'complete' }, 'Order completed')));
+      on('#cancel', 'click', () => confirmDelete(
+        'Cancel and refund?',
+        'The full amount goes back to the buyer\u2019s wallet balance.',
+        () => act({ action: 'cancel' }, 'Refunded')));
+      on('#close', 'click', () => { closing = !closing; paint(); });
+      on('#closeReason', 'keydown', (e) => {
+        if (e.key === 'Enter') view.querySelector('#closeGo').click();
+      });
+      on('#closeGo', 'click', () => {
+        const el = view.querySelector('#closeReason');
+        const reason = el.value.trim();
+        if (!reason) return toast('Give a reason first', 'err');
+        closeDraft = reason;
+        confirmDelete(
+          'Close without refunding?',
+          'The buyer keeps nothing back and is sent your reason. '
+            + 'This cannot be undone from here.',
+          () => act({ action: 'close', reason }, 'Closed, no refund'));
+      });
+    };
+    paint();
+  });
+}
+
+function referrersView() {
+  pushScreen(async () => {
+    loading();
+    const list = await api('/admin/referrers');
+    const invites = list.reduce((n, u) => n + u.invited, 0);
+    const buyers = list.reduce((n, u) => n + u.buyers, 0);
+    html(`
+      <h1>Referrers</h1>
+      <p class="sub">Everyone who has invited at least one person.</p>
+      ${list.length ? `
+        <div class="card">
+          <div class="between"><span class="muted small">Referrers</span>
+            <b class="num">${list.length}</b></div>
+          <div class="between" style="margin-top:10px"><span class="muted small">Invited</span>
+            <span class="num">${invites}</span></div>
+          <div class="between" style="margin-top:10px"><span class="muted small">Of those, bought</span>
+            <span class="num">${buyers}</span></div>
+        </div>
+        <div style="height:12px"></div>
+        ${list.map((u) => `
+        <div class="card" data-u="${u.tg_id}" role="button" tabindex="0">
+          <div class="between">
+            <div class="grow trunc"><b>${esc(u.first_name || 'Unnamed')}</b>
+              <span class="muted small">${u.username ? '@' + esc(u.username) : ''}</span></div>
+            <span class="num">${u.invited} invited</span>
+          </div>
+          <div class="between small muted" style="margin-top:6px">
+            <span class="num">${u.tg_id}</span>
+            <span>${u.buyers} bought · earned ${money(u.ref_earned)}
+              ${u.is_banned ? '<span class="pill bad">Banned</span>' : ''}</span>
+          </div>
+        </div>`).join('')}`
+        : `<div class="empty"><b>No referrers yet</b>Nobody has invited anyone so far.</div>`}`);
+
+    view.querySelectorAll('[data-u]').forEach((el) =>
+      el.onclick = () => userView(Number(el.dataset.u)));
+  });
+}
+
+function userView(uid) {
+  pushScreen(async () => {
+    loading();
+    const [u] = await api(`/admin/users?q=${uid}`);
+    html(`
+      <h1>${esc(u.first_name || 'Unnamed')}</h1>
+      <p class="sub num">${u.tg_id}${u.username ? ' · @' + esc(u.username) : ''}</p>
+      <div class="card">
+        <div class="between"><span class="muted small">Balance</span>
+          <b class="num">${money(u.balance)}</b></div>
+        <div class="between" style="margin-top:10px"><span class="muted small">Lifetime</span>
+          <span class="num">${u.orders} orders · ${money(u.spent)}</span></div>
+        <div class="between" style="margin-top:10px"><span class="muted small">Access</span>
+          ${u.is_banned ? '<span class="pill bad">Banned</span>'
+                        : '<span class="pill ok">Active</span>'}</div>
+      </div>
+      <label>Adjust balance (negative to deduct)</label>
+      <div class="row"><input id="delta" inputmode="decimal" placeholder="e.g. 500 or -200">
+        <button class="mini" id="apply">Apply</button></div>
+      <button class="ghost" id="ban" style="margin-top:14px">
+        ${u.is_banned ? 'Restore access' : 'Ban from shop'}</button>
+
+      <h2>Custom prices</h2>
+      <p class="sub">A price just for this buyer. Overrides their tier and the
+        list price, everywhere — shop, checkout and charge.</p>
+      <div id="upl" class="wallet"><p class="sub">Loading…</p></div>
+      <div class="row" style="margin-top:10px">
+        <select id="up_pid"><option value="">Choose a product…</option></select>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <input id="up_price" inputmode="decimal" placeholder="Price for this buyer">
+        <button class="mini" id="up_set">Set</button>
+      </div>
+
+      <h2>Send a message</h2>
+      <p class="sub">Goes straight to this person as a private message from the
+        bot. HTML formatting works.</p>
+      <textarea id="dm" placeholder="Hi — about your recent order…"></textarea>
+      <button id="dmsend" style="margin-top:8px">Send message</button>`);
+
+    on('#apply', 'click', async () => {
+      const delta = Number(view.querySelector('#delta').value);
+      if (!delta) return toast('Enter an amount', 'err');
+      await api(`/admin/user/${uid}`, { method: 'POST', body: { delta } });
+      toast(delta > 0 ? 'Balance credited' : 'Balance debited'); refresh();
+    });
+    on('#ban', 'click', async () => {
+      await api(`/admin/user/${uid}`, { method: 'POST', body: { banned: !u.is_banned } });
+      toast(u.is_banned ? 'Access restored' : 'User banned'); refresh();
+    });
+    const paintPrices = (rows) => {
+      const el = view.querySelector('#upl');
+      if (!el) return;
+      el.innerHTML = rows.length ? rows.map((r) => `
+        <div class="between" style="padding:8px 0">
+          <div class="grow trunc"><b>${esc(r.name)}</b>
+            <div class="small muted">list ${money(r.list_price)}
+              → <b>${money(r.price)}</b></div></div>
+          <button class="ghost mini danger-text" data-up-x="${r.product_id}"
+                  style="width:auto">Remove</button>
+        </div>`).join('')
+        : '<p class="sub">No custom prices — this buyer pays their tier or list price.</p>';
+      el.querySelectorAll('[data-up-x]').forEach((b) => b.onclick = async () => {
+        const r = await api(`/admin/user/${uid}/prices`, { method: 'POST',
+          body: { product_id: Number(b.dataset.upX), clear: 1 } });
+        toast('Custom price removed'); paintPrices(r.prices);
+      });
+    };
+
+    // list and picker load after the main render: neither is needed to read the
+    // screen, and blocking on two more requests would slow every visit
+    api(`/admin/user/${uid}/prices`).then((r) => paintPrices(r.prices)).catch(() => {});
+    api('/admin/catalog').then((cats) => {
+      const sel = view.querySelector('#up_pid');
+      if (!sel) return;
+      cats.flatMap((c) => c.products).forEach((p) => {
+        const o = document.createElement('option');
+        o.value = p.id;
+        o.textContent = `${p.name} — ${money(p.price)}`;
+        sel.appendChild(o);
+      });
+    }).catch(() => {});
+
+    on('#up_set', 'click', async () => {
+      const pid = view.querySelector('#up_pid').value;
+      const price = view.querySelector('#up_price').value.trim();
+      if (!pid) return toast('Choose a product', 'err');
+      if (price === '' || isNaN(Number(price))) return toast('Enter a price', 'err');
+      try {
+        const r = await api(`/admin/user/${uid}/prices`, { method: 'POST',
+          body: { product_id: Number(pid), price: Number(price) } });
+        view.querySelector('#up_price').value = '';
+        toast('Price set for this buyer');
+        paintPrices(r.prices);
+      } catch (err) { toast(err.message, 'err'); }
+    });
+
+    on('#dmsend', 'click', async (e) => {
+      const box = view.querySelector('#dm');
+      const message = box.value.trim();
+      if (!message) return toast('Write the message first', 'err');
+      e.target.disabled = true;
+      try {
+        await api(`/admin/user/${uid}`, { method: 'POST', body: { message } });
+        // only clear once the send is confirmed — a delivery failure that also
+        // wiped the text would cost the message as well as the attempt
+        box.value = '';
+        toast('Message sent');
+      } catch (err) {
+        toast(err.message || 'Could not send', 'err');
+      }
+      e.target.disabled = false;
+    });
+  });
+}
+
+/* ------------------------------------------------------------------- more */
+let walletShowAll = false;
+
+function profitView() {
+  pushScreen(async () => {
+    const d = await api('/admin/profit');
+    const money = (n) => `${d.currency || ''}${Number(n || 0).toFixed(2)}`;
+    const win = (k, label) => `
+      <div><span>${label}</span><b>${money(d.windows[k].profit)}</b>
+        <span class="muted small">${money(d.windows[k].revenue)} in ·
+          ${money(d.windows[k].cost)} cost · ${d.windows[k].margin}%</span></div>`;
+    html(`
+      <h1>Profit</h1>
+      <p class="sub">Revenue minus cost price, on delivered purchases. Cost is
+        recorded when an order is delivered, so changing a product's cost later
+        won't rewrite past figures.</p>
+      ${d.no_cost ? `<p class="sub">⚠️ ${d.no_cost} active product${
+        d.no_cost === 1 ? ' has' : 's have'} no cost price set — those count as
+        pure profit until you add one.</p>` : ''}
+
+      <div class="dash">
+        ${win('1', 'Last 24 hours')}${win('7', 'Last 7 days')}
+        ${win('30', 'Last 30 days')}${win('all', 'All time')}
+      </div>
+
+      <h2>By product</h2>
+      ${!d.products.length ? '<p class="sub">No delivered sales yet.</p>' : `
+        <div class="wallet">${d.products.map((p) => `
+          <div class="wcard">
+            <div class="wtop"><span class="wname">${esc(p.name || '—')}</span>
+              <span class="wamt">${money(p.profit)}</span></div>
+            <div class="wmeta"><span>${p.units} unit${p.units === 1 ? '' : 's'} ·
+              ${money(p.revenue)} in · ${money(p.cost)} cost</span>
+              <span>${p.margin}%</span></div>
+          </div>`).join('')}</div>`}
+    `);
+  });
+}
+
+
+function dashView() {
+  pushScreen(async () => {
+    const d = await api('/admin/dashboard');
+    const money = (n) => `${d.currency || ''}${Number(n || 0).toFixed(2)}`;
+    const who = (b) => b.username ? '@' + esc(b.username)
+                                  : esc(b.first_name || b.user_id);
+    const win = (k, label) => `
+      <div><span>${label}</span><b>${money(d.revenue[k].revenue)}</b>
+        <span class="muted small">${d.revenue[k].orders} order${
+          d.revenue[k].orders === 1 ? '' : 's'}</span></div>`;
+    html(`
+      <h1>Dashboard</h1>
+      <p class="sub">Delivered purchases only. Deposits are not counted —
+        money moved into a wallet is not revenue until it buys something.</p>
+
+      <div class="dash">
+        ${win('1', 'Last 24 hours')}${win('7', 'Last 7 days')}
+        ${win('30', 'Last 30 days')}${win('all', 'All time')}
+      </div>
+
+      <h2>Most sold</h2>
+      ${!d.products.length ? '<p class="sub">No sales yet.</p>' : `
+        <div class="wallet">${d.products.map((p, i) => `
+          <div class="wcard"><div class="wtop">
+            <span class="wname">${i + 1}. ${esc(p.name || '—')}</span>
+            <span class="wamt">${money(p.revenue)}</span></div>
+            <div class="wmeta"><span>${p.units} unit${
+              p.units === 1 ? '' : 's'} · ${p.orders} order${
+              p.orders === 1 ? '' : 's'}</span></div>
+          </div>`).join('')}</div>`}
+
+      <h2>Top buyers</h2>
+      ${!d.buyers.length ? '<p class="sub">No sales yet.</p>' : `
+        <div class="wallet">${d.buyers.map((b, i) => `
+          <div class="wcard"><div class="wtop">
+            <span class="wname">${i + 1}. ${who(b)}</span>
+            <span class="wamt">${money(b.spent)}</span></div>
+            <div class="wmeta"><span>${b.orders} order${
+              b.orders === 1 ? '' : 's'} · ${b.units} unit${
+              b.units === 1 ? '' : 's'}</span>
+              <code class="small">${b.user_id}</code></div>
+          </div>`).join('')}</div>`}
+    `);
+  });
+}
+
+
+function walletView() {
+  pushScreen(async () => {
+    const w = await api('/admin/wallet' + (walletShowAll ? '?all=1' : ''));
+    const money = (n) => `${w.currency || ''}${Number(n || 0).toFixed(2)}`;
+    html(`
+      <h1>Deposit wallet</h1>
+      ${w.hidden_count ? `<p class="sub"><a href="#" id="togglehidden">${
+          w.showing_all ? 'Hide swept addresses' : `Show ${w.hidden_count} hidden`
+        }</a></p>` : ''}
+      ${!w.ready ? `<p class="sub">Per-order addresses are off${
+          w.problem ? ` — ${esc(w.problem)}` : ''}.</p>` : `
+      <p class="sub">Each order gets its own address, derived from your seed.
+        Import the seed into MetaMask to sweep — <b>account number = index +
+        1</b>. Each account needs a little BNB for gas before its USDT can be
+        moved.</p>
+      <p class="sub">Path <code>${esc(w.path || '')}</code> ·
+        next index <b>${w.next_index}</b> ·
+        ${w.pending} awaiting payment</p>
+      ${!(w.accounts || []).length ? '<p class="sub">No address has received funds yet.</p>' : `
+        <div class="wallet">
+        ${w.accounts.map((a) => `
+          <div class="wcard">
+            <div class="wtop">
+              <span class="wname">${a.index === null || a.index === undefined
+                    ? (a.shared ? 'Shared address' : 'Unknown address')
+                    : `Account ${a.index + 1}`}${
+                    a.index === null || a.index === undefined ? ''
+                      : `<span class="widx">index ${a.index}</span>`}</span>
+              <span class="wamt">${a.available === null || a.available === undefined
+                    ? '<span class="muted">?</span>' : money(a.available)}
+                <button class="whide" data-addr="${esc(a.address)}"
+                        data-show="${a.hidden ? '1' : ''}"
+                        title="${a.hidden ? 'Show again' : 'Hide once swept'}"
+                        >${a.hidden ? '↩' : '✕'}</button></span>
+            </div>
+            <code class="waddr">${esc(a.address)}</code>
+            <div class="wmeta">
+              <span>${money(a.amount)} received · ${a.orders} order${
+                    a.orders === 1 ? '' : 's'}${
+                    a.late ? ` · ${a.late} late` : ''}</span>
+              <a target="_blank"
+                 href="https://bscscan.com/address/${esc(a.address)}">BscScan ↗</a>
+            </div>
+          </div>`).join('')}
+        </div>
+        <div class="wtotals">
+          <div><span>Unclaimed</span><b>${w.unclaimed === null || w.unclaimed === undefined
+              ? '—' : money(w.unclaimed)}</b></div>
+          <div><span>Total received</span><b>${money(w.total)}</b></div>
+        </div>
+        <p class="sub">Unclaimed is what is sitting on these addresses now,
+          waiting to be swept. Total received counts everything they have ever
+          taken in, including what you have already moved out.
+          ${w.unknown_balances ? `<br>${w.unknown_balances} address(es)
+            couldn't be checked — shown as <b>?</b> rather than zero.` : ''}
+        </p>`}`}`);
+  });
+}
+
+
+function moreView() {
+  replaceScreen(async () => {
+    const [s, f, msgs, w] = await Promise.all(
+      [api('/admin/settings'), api('/admin/flair'), api('/admin/texts'),
+       api('/admin/wallet').catch(() => ({ ready: false }))]);
+    const money = (n) => `${w.currency || ''}${Number(n || 0).toFixed(2)}`;
+    html(`
+      <h1>More</h1>
+      <div class="row between" style="margin-bottom:14px">
+        <span class="sub" style="margin:0">Signed in as
+          <b>${esc(me.name || me.id || 'admin')}</b></span>
+        <button class="mini ghost" id="signout" style="width:auto">Sign out</button>
+      </div>
+
+      <h2>Deposit wallet</h2>
+      <p class="sub">Per-order addresses, live balances, and what is waiting to
+        be swept.</p>
+      <button id="walletbtn" class="ghost">Open deposit wallet →</button>
+
+      <h2>Makers</h2>
+      <p class="sub">Suppliers who fulfil manual orders. They sign in at
+        <code>/maker</code> and only ever see orders for products assigned to
+        them — never your buyers, catalogue or takings.</p>
+      <div id="makerlist" class="wallet"><p class="sub">Loading…</p></div>
+      <label style="margin-top:12px">Add a maker</label>
+      <input id="mk_name" placeholder="Name (e.g. Ravi — Jio activations)">
+      <input id="mk_email" type="email" placeholder="Email" style="margin-top:8px">
+      <input id="mk_pw" type="password" placeholder="Password (8+ characters)"
+             style="margin-top:8px">
+      <button class="ghost" id="mk_add" style="margin-top:8px">Create maker</button>
+
+      <h2>Broadcast</h2>
+      <p class="sub">Sent as a private message to everyone who isn't banned, one
+        at a time. HTML works. Use <code>{name}</code> for their first name and
+        <code>{username}</code> for their @handle.</p>
+      <textarea id="bc" placeholder="Hi {name}, fresh stock just landed — 20% off today."></textarea>
+      <div class="row" style="gap:8px;margin-top:8px">
+        <button class="ghost mini" id="preview" style="width:auto">Preview</button>
+        <button id="send" class="grow">Send broadcast</button>
+      </div>
+      <div id="bcinfo" class="sub" style="margin-top:8px"></div>
+
+      <h2>Shop status</h2>
+      <label class="tog">
+        <span><b>Shop open</b><div class="hint">Off = closed to everyone but you</div></span>
+        <input type="checkbox" id="maint" ${f.maintenance ? '' : 'checked'}>
+      </label>
+      <label class="tog">
+        <span><b>Mini App</b><div class="hint">Off = chat only, no storefront</div></span>
+        <input type="checkbox" id="miniapp" ${f.miniapp_enabled ? 'checked' : ''}>
+      </label>
+      <label class="tog">
+        <span><b>Menu button opens the Mini App</b>
+          <div class="hint">Off = shows the command list</div></span>
+        <input type="checkbox" id="menubtn" ${f.menu_button ? 'checked' : ''}>
+      </label>
+
+      <h2>Payment methods</h2>
+      <p class="sub">Off hides a rail from buyers. Wallet balance is always on.</p>
+      <div id="rails">
+        ${(f.rails || []).map((r) => `
+          <label class="tog">
+            <span><b>${esc(r.title)}</b>${r.ready ? ''
+              : '<div class="hint">Not configured — add its account details first</div>'}</span>
+            <input type="checkbox" class="rail" data-code="${esc(r.code)}"
+                   ${r.on ? 'checked' : ''}>
+          </label>
+          ${r.split ? `
+          <label class="tog sub2">
+            <span>Deposits</span>
+            <input type="checkbox" class="rail-topup" data-code="${esc(r.code)}"
+                   ${r.topup ? 'checked' : ''}>
+          </label>
+          <label class="tog sub2">
+            <span>Purchases</span>
+            <input type="checkbox" class="rail-buy" data-code="${esc(r.code)}"
+                   ${r.purchase ? 'checked' : ''}>
+          </label>` : ''}`).join('')}
+      </div>
+
+      <h2>Group posts</h2>
+
+      <label>Sales feed group</label>
+      <div class="hint">A post for every sale. Blank = off.</div>
+      <input id="feed" placeholder="-1001234567890" value="${esc(f.sales_chat)}">
+
+      <label>Announcements group</label>
+      <div class="hint">New products, restocks, price drops. Blank = same as above.</div>
+      <input id="restock" placeholder="same as above"
+             value="${esc(f.restock_chat || '')}">
+
+      <label>Sale post wording</label>
+      <textarea id="tpl" style="min-height:60px">${esc(f.sale_template)}</textarea>
+      <div class="hint">{qty} {product} {name} {amount} {provider} {buyer} —
+        the buyer tag is hashed, it never reveals an account.</div>
+
+      <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:10px">
+        <button class="mini ${f.sale_button === '1' ? '' : 'ghost'}" id="saleBtn">
+          ${f.sale_button === '1' ? '✓ Shop button on posts' : 'Shop button on posts'}</button>
+        <button class="mini ${f.hide_amount === '1' ? '' : 'ghost'}" id="hideAmt">
+          ${f.hide_amount === '1' ? '✓ Amount hidden' : 'Amount shown'}</button>
+      </div>
+      <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button class="mini" id="saveFeed">Save</button>
+        <button class="ghost mini" id="testFeed">Send test post</button>
+      </div>
+
+      <h2>Stickers &amp; premium emoji</h2>
+      <p class="sub">Send the bot <b>/ids</b>, then a sticker or a premium emoji, to get the
+        values below. Custom emoji need the bot owner to have Telegram Premium, or the bot to
+        own a Fragment username — if Telegram refuses them, the plain emoji is used instead
+        and nothing breaks.
+        <b>Button labels can't show custom emoji at all</b>; Telegram allows plain text only
+        there, so the flair lands in the message above the buttons.</p>
+      ${f.custom_emoji_working ? '' :
+        '<div class="card"><span class="pill wait">Falling back</span> ' +
+        '<span class="small muted">Telegram refused a custom emoji this run — plain emoji ' +
+        'are being used.</span></div>'}
+      <input class="search" id="fxq" placeholder="Filter by name, e.g. buy or refer">
+      ${[...new Set(f.slots.map((s) => s.section))].map((sec) => `
+        <details class="fxsec">
+          <summary>${esc(sec)}
+            <span class="fxcount">${f.slots.filter((x) => x.section === sec
+              && (x.emoji || x.sticker)).length}/${
+              f.slots.filter((x) => x.section === sec).length}</span></summary>
+          ${f.slots.filter((x) => x.section === sec).map((x) => `
+            <div class="fxrow" data-find="${esc((x.name + ' ' + (x.label || '')).toLowerCase())}">
+              <div class="fxname">${x.fallback} ${esc(x.label || x.name)}
+                <code>${esc(x.name)}</code></div>
+              <input class="fx" data-k="emoji_${x.name}" value="${esc(x.emoji)}"
+                     inputmode="numeric" placeholder="emoji id">
+              <input class="fx" data-k="sticker_${x.name}" value="${esc(x.sticker)}"
+                     placeholder="sticker id">
+            </div>`).join('')}
+        </details>`).join('')}
+      <button class="ghost" id="saveFlair">Save stickers &amp; emoji</button>
+
+      <h2>Button styles</h2>
+      <p class="sub">Bot API 9.4 gives buttons three colours. They're already mapped by
+        meaning — green commits, red destroys, blue leads in — and work on every account.
+        A custom emoji <b>icon</b> on a button needs Premium on the account that owns the bot.</p>
+      <div class="card">
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          <span class="pill ok">success · buy, approve, add stock</span>
+          <span class="pill bad">danger · delete, reject, cancel</span>
+          <span class="pill neutral" style="color:var(--accent)">primary · shop, top up</span>
+        </div>
+      </div>
+      <button class="ghost" id="testBtns">Send me a style test</button>
+
+      <h2>Storefront hero</h2>
+      <p class="sub">The headline buyers see when they open the shop.</p>
+      <label>Badge</label>
+      <input id="h_badge" value="${esc(s.hero_badge || '')}"
+             placeholder="Trusted digital marketplace">
+      <label>Headline</label>
+      <input id="h_title" value="${esc(s.hero_title || '')}"
+             placeholder="Premium digital products,">
+      <label>Highlighted second line</label>
+      <input id="h_accent" value="${esc(s.hero_accent || '')}"
+             placeholder="delivered instantly.">
+      <label>Supporting text</label>
+      <textarea id="h_sub" style="min-height:70px">${esc(s.hero_sub || '')}</textarea>
+      <button class="ghost" id="saveHero" style="margin-top:10px">Save hero</button>
+
+      <h2>Bot messages</h2>
+      <p class="sub">Every message the bot sends. Leave a box empty to keep the
+        default.</p>
+      <input class="search" id="msgq" placeholder="Filter by name, e.g. delivery or refer">
+      ${[...new Set(msgs.messages.map((m) => m.section))].map((sec) => `
+        <details class="fxsec">
+          <summary>${esc(sec)}
+            <span class="fxcount">${msgs.messages.filter((m) => m.section === sec
+              && m.edited).length}/${
+              msgs.messages.filter((m) => m.section === sec).length} edited</span></summary>
+          ${msgs.messages.filter((m) => m.section === sec).map((m) => `
+            <details class="msgrow" data-find="${esc((m.key + ' ' + m.label).toLowerCase())}">
+              <summary>${m.edited ? '✏️' : '·'} ${esc(m.label)}
+                <code>${esc(m.key)}</code></summary>
+              ${m.fields.length ? `<div class="tiny muted" style="margin:2px 0 5px">
+                ${m.fields.map((f) => '{' + esc(f) + '}').join(' ')}</div>` : ''}
+              <textarea class="msg" data-k="${esc(m.key)}" data-default="${esc(m.default)}"
+                style="min-height:76px">${esc(m.value)}</textarea>
+              ${m.edited ? `<button class="ghost mini reset" data-k="${esc(m.key)}"
+                style="margin-top:6px">↩ Restore default</button>` : ''}
+            </details>`).join('')}
+        </details>`).join('')}
+      <button class="ghost" id="saveMsgs">Save messages</button>`);
+
+    // same filter behaviour as the flair editor: matches open their section
+    // and their own row, so a hit is never hidden two levels deep
+    on('#msgq', 'input', (e) => {
+      const q = e.target.value.trim().toLowerCase();
+      view.querySelectorAll('#msgq ~ .fxsec').forEach((sec) => {
+        let hits = 0;
+        sec.querySelectorAll('.msgrow').forEach((r) => {
+          const show = !q || r.dataset.find.includes(q);
+          r.style.display = show ? '' : 'none';
+          if (show) { hits++; if (q) r.open = true; }
+        });
+        sec.style.display = hits ? '' : 'none';
+        if (q) sec.open = true;
+      });
+    });
+    on('#signout', 'click', () => {
+      session.clear();
+      location.replace(location.pathname);      // drop any ?token= too
+    });
+    on('#walletbtn', 'click', () => { haptic(); walletView(); });
+    const paintMakers = (rows) => {
+      const el = view.querySelector('#makerlist');
+      if (!el) return;
+      el.innerHTML = rows.length ? rows.map((m) => {
+        // A tick alone can lie: someone marks themselves available and then
+        // shuts the laptop. Show the claim, but downgrade it to "Away" once we
+        // have not seen a request from them in a while.
+        const seen = m.last_seen ? Date.parse(m.last_seen.replace(' ', 'T') + 'Z') : 0;
+        const fresh = seen && (Date.now() - seen) < 5 * 60 * 1000;
+        const [avail, tone] = !m.is_online ? ['Offline', '']
+          : fresh ? ['Online', 'ok'] : ['Away', 'wait'];
+        const ago = !seen ? 'never seen'
+          : fresh ? 'active now'
+          : `last seen ${new Date(seen).toLocaleString()}`;
+        return `
+        <div class="between" style="padding:8px 0">
+          <div class="grow trunc">
+            <b>${esc(m.name || m.email)}</b>
+            <div class="small muted trunc">${esc(m.email)} · ${ago}</div>
+          </div>
+          <div class="row" style="gap:6px">
+            <span class="pill ${tone}">${avail}</span>
+            <span class="pill ${m.is_active ? 'ok' : 'bad'}">
+              ${m.is_active ? 'Active' : 'Off'}</span>
+            <button class="ghost mini" data-mk-t="${m.id}" data-on="${m.is_active ? 1 : 0}"
+                    style="width:auto">${m.is_active ? 'Disable' : 'Enable'}</button>
+            <button class="ghost mini danger-text" data-mk-d="${m.id}"
+                    style="width:auto">Delete</button>
+          </div>
+        </div>`; }).join('')
+        : '<p class="sub">No makers yet.</p>';
+
+      el.querySelectorAll('[data-mk-t]').forEach((b) => b.onclick = async () => {
+        const r = await api('/admin/makers', { method: 'POST', body: {
+          action: 'active', id: Number(b.dataset.mkT), active: b.dataset.on !== '1' } });
+        toast('Updated'); paintMakers(r.makers);
+      });
+      el.querySelectorAll('[data-mk-d]').forEach((b) => b.onclick = () => confirmDelete(
+        'Delete this maker?',
+        'They lose access immediately. Products assigned to them become unassigned, '
+        + 'and orders already in flight stay in your own Manual queue.',
+        async () => {
+          const r = await api('/admin/makers', { method: 'POST', body: {
+            action: 'delete', id: Number(b.dataset.mkD) } });
+          toast('Maker removed'); paintMakers(r.makers);
+        }));
+    };
+    api('/admin/makers').then((r) => paintMakers(r.makers)).catch(() => {});
+
+    on('#mk_add', 'click', async () => {
+      const name = view.querySelector('#mk_name').value.trim();
+      const email = view.querySelector('#mk_email').value.trim();
+      const password = view.querySelector('#mk_pw').value;
+      if (!email || password.length < 8) {
+        return toast('Email, and a password of 8+ characters', 'err');
+      }
+      try {
+        const r = await api('/admin/makers',
+                            { method: 'POST', body: { action: 'add', name, email, password } });
+        // clear the password immediately — it is the one field that must not
+        // sit on screen after use
+        view.querySelector('#mk_pw').value = '';
+        view.querySelector('#mk_name').value = '';
+        view.querySelector('#mk_email').value = '';
+        toast('Maker created');
+        paintMakers(r.makers);
+      } catch (err) { toast(err.message, 'err'); }
+    });
+
+    on('#preview', 'click', async () => {
+      const text = view.querySelector('#bc').value.trim();
+      if (!text) return toast('Write the message first', 'err');
+      try {
+        const r = await api('/admin/broadcast',
+                            { method: 'POST', body: { text, preview: 1 } });
+        view.querySelector('#bcinfo').innerHTML =
+          `<b>${r.total}</b> recipient${r.total === 1 ? '' : 's'}. One of them sees:`
+          + `<div class="card" style="margin-top:8px;white-space:pre-wrap">${esc(r.sample)}</div>`;
+      } catch (err) { toast(err.message, 'err'); }
+    });
+
+    on('#send', 'click', (e) => {
+      const text = view.querySelector('#bc').value.trim();
+      if (!text) return toast('Write the message first', 'err');
+      confirmDelete('Send to everyone?',
+        'Each person gets it as a private message. This cannot be recalled.',
+        async () => {
+          e.target.disabled = true;
+          e.target.textContent = 'Queueing…';
+          try {
+            const r = await api('/admin/broadcast', { method: 'POST', body: { text } });
+            // sending runs in the background, so this only confirms it started
+            // — the finished count arrives as a DM from the bot
+            toast(`Sending to ${r.queued} — you'll get a DM when it's done`);
+            view.querySelector('#bcinfo').textContent =
+              `Sending to ${r.queued}. The bot will message you the results.`;
+          } catch (err) { toast(err.message, 'err'); }
+          e.target.disabled = false;
+          e.target.textContent = 'Send broadcast';
+        });
+    });
+    const flairBody = () => {
+      const unchecked = (sel) => [...view.querySelectorAll(sel)]
+        .filter((i) => !i.checked).map((i) => i.dataset.code);
+      const out = { menu_button: view.querySelector('#menubtn').checked,
+                    miniapp_enabled: view.querySelector('#miniapp').checked,
+                    // the switch reads "Shop open", the setting is "maintenance"
+                    maintenance: !view.querySelector('#maint').checked,
+                    rails_disabled: unchecked('.rail'),
+                    rails_off_topup: unchecked('.rail-topup'),
+                    rails_off_purchase: unchecked('.rail-buy'),
+                    sales_chat: view.querySelector('#feed').value.trim(),
+                    restock_chat: view.querySelector('#restock').value.trim(),
+                    sale_template: view.querySelector('#tpl').value.trim() };
+      view.querySelectorAll('.fx').forEach((i) => { out[i.dataset.k] = i.value.trim(); });
+      return out;
+    };
+    on('#saveFeed', 'click', async () => {
+      await api('/admin/flair', { method: 'POST', body: flairBody() });
+      toast('Sales feed saved');
+    });
+    on('#saveFlair', 'click', async () => {
+      await api('/admin/flair', { method: 'POST', body: flairBody() });
+      toast('Stickers and emoji saved');
+    });
+    on('#saleBtn', 'click', async () => {
+      await api('/admin/flair', { method: 'POST',
+        body: { sale_button: f.sale_button === '1' ? '0' : '1' } });
+      toast('Feed updated'); moreView();
+    });
+    on('#hideAmt', 'click', async () => {
+      await api('/admin/flair', { method: 'POST',
+        body: { hide_amount: f.hide_amount === '1' ? '0' : '1' } });
+      toast('Feed updated'); moreView();
+    });
+    on('#testFeed', 'click', async (e) => {
+      e.target.disabled = true;
+      try {
+        await api('/admin/flair', { method: 'POST',
+          body: { test: 1, chat: view.querySelector('#feed').value.trim() } });
+        toast('Test posted to the group');
+      } catch (err) { toast(err.message, 'err'); }
+      e.target.disabled = false;
+    });
+    on('#testBtns', 'click', async (e) => {
+      e.target.disabled = true;
+      try {
+        const r = await api('/admin/flair', { method: 'POST', body: { test_buttons: 1 } });
+        toast(r.note === 'ok' ? 'Sent — check your chat with the bot' : r.note);
+      } catch (err) { toast(err.message, 'err'); }
+      e.target.disabled = false;
+    });
+    on('#saveHero', 'click', async () => {
+      await api('/admin/settings', { method: 'POST', body: {
+        hero_badge: view.querySelector('#h_badge').value,
+        hero_title: view.querySelector('#h_title').value,
+        hero_accent: view.querySelector('#h_accent').value,
+        hero_sub: view.querySelector('#h_sub').value } });
+      toast('Hero saved');
+    });
+    view.querySelectorAll('.reset').forEach((b) => b.onclick = () => {
+      const ta = view.querySelector(`.msg[data-k="${b.dataset.k}"]`);
+      ta.value = ta.dataset.default;
+      toast('Default restored — save to apply');
+    });
+    on('#saveMsgs', 'click', async (e) => {
+      const out = {};
+      view.querySelectorAll('.msg').forEach((t) => { out[t.dataset.k] = t.value; });
+      e.target.disabled = true;
+      await api('/admin/texts', { method: 'POST', body: out });
+      toast('Messages saved');
+      e.target.disabled = false;
+      moreView();
+    });
+  });
+}
+
+init();
+</script>
+</body>
+</html>
