@@ -772,7 +772,17 @@ async def adm_order_action(request):
     if not o:
         return web.json_response({"error": "not found"}, status=404)
     bot = request.app["bot"]
+    # A dialog in the panel stops a mis-tap, but not a double-tap that lands
+    # twice, a stale tab whose buttons predate the delivery, or a retried
+    # request. settle() refuses to deliver an order that is already paid or
+    # delivered — but only by reading its status, and approve used to overwrite
+    # that status with "pending" before calling it, which walked straight past
+    # the guard and allocated a second set of stock. Check before touching it.
+    SETTLED = {"paid", "delivered", "fulfilling", "cancelled", "rejected"}
     if action == "approve":
+        if o["status"] in SETTLED:
+            return web.json_response(
+                {"error": f"order is already {o['status']}"}, status=409)
         await db.set_order(oid, status="pending")
         ok = await delivery.settle(bot, oid, ref=o["external_ref"])
         return web.json_response({"ok": ok, "status": (await db.order(oid))["status"]})
@@ -783,6 +793,14 @@ async def adm_order_action(request):
         await db.release_balance(oid)
         return web.json_response({"ok": True, "status": "cancelled"})
     if action == "reject":
+        # release_balance below hands money back. On an order that already
+        # shipped that is a refund with the goods still gone, so treat a
+        # settled order as out of reach here the same way cancel does.
+        if o["status"] in {"delivered", "paid", "fulfilling"}:
+            return web.json_response(
+                {"error": f"order is already {o['status']} — delete it instead"}, status=409)
+        if o["status"] == "rejected":
+            return web.json_response({"ok": True, "status": "rejected"})
         await db.set_order(oid, status="rejected")
         # same as the Telegram panel: hand back any reserved wallet balance
         await db.release_balance(oid)

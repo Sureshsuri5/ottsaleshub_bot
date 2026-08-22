@@ -661,6 +661,9 @@ function confirmDelete(title, detail, run) {
   if (confirm(`${title}\n\n${detail}`)) go();
 }
 
+// Same dialog, honest name at the call sites that aren't deletions.
+const confirmAction = confirmDelete;
+
 /* ----------------------------------------------------------------- orders */
 
 // One tab row shared by the order lists and the manual queue, so Manual reads
@@ -717,15 +720,41 @@ function ordersView(filter = 'open', term = '') {
       if (e.target.closest('[data-act]')) return;
       haptic(); orderView(c.dataset.open);
     });
-    view.querySelectorAll('[data-act]').forEach((b) => b.onclick = async () => {
-      b.disabled = true;
-      try {
-        const r = await api(`/admin/order/${b.dataset.oid}/${b.dataset.act}`, { method: 'POST' });
-        toast(r.status === 'delivered' ? 'Delivered'
-              : r.status === 'rejected' ? 'Rejected'
-              : r.status === 'cancelled' ? 'Cancelled' : `Now ${r.status}`);
-        ordersView(filter);
-      } catch (e) { toast(e.message, 'err'); b.disabled = false; }
+    // Every one of these is irreversible from the buyer's side — goods go out,
+    // or a rejection notice does — and on a phone the two buttons sit side by
+    // side inside a list of near-identical cards. Confirm first, and name the
+    // order in the prompt so a tap on the wrong card is caught here.
+    const ACT = {
+      approve: ['Approve order',
+                'The buyer is sent their items straight away and the order is marked '
+                + 'delivered. This cannot be undone.'],
+      deliver: ['Mark order paid & deliver',
+                'The order is treated as paid without waiting for a reference, the buyer '
+                + 'is sent their items, and stock is consumed. This cannot be undone.'],
+      reject:  ['Reject order',
+                'The buyer is told their payment could not be matched, and any wallet '
+                + 'balance the order was holding is released back to them.'],
+      cancel:  ['Cancel order',
+                'The order is closed without delivering. Any stock it was holding goes '
+                + 'back on the shelf and reserved balance is released.'],
+    };
+    view.querySelectorAll('[data-act]').forEach((b) => b.onclick = () => {
+      const { act, oid } = { act: b.dataset.act, oid: b.dataset.oid };
+      // one button covers both an unpaid order and one awaiting review, and the
+      // two need different wording — the label already distinguishes them
+      const key = act === 'approve' && /paid/i.test(b.textContent) ? 'deliver' : act;
+      const [title, detail] = ACT[key] || [`${act} order`, 'This cannot be undone.'];
+      const name = b.closest('.card')?.querySelector('b')?.textContent.trim() || '';
+      confirmAction(`${title} #${oid}?${name ? `\n${name}` : ''}`, detail, async () => {
+        b.disabled = true;
+        try {
+          const r = await api(`/admin/order/${oid}/${act}`, { method: 'POST' });
+          toast(r.status === 'delivered' ? 'Delivered'
+                : r.status === 'rejected' ? 'Rejected'
+                : r.status === 'cancelled' ? 'Cancelled' : `Now ${r.status}`);
+          ordersView(filter);
+        } catch (e) { b.disabled = false; throw e; }   // confirmAction toasts it
+      });
     });
   });
 }
