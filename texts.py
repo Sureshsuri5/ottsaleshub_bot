@@ -234,6 +234,20 @@ MESSAGES: dict[str, Msg] = {
         "<i>You asked to be told. Stock goes fast — first come, first served.</i>",
         "Back-in-stock alert", "Shop",
         ("product", "emoji", "stock", "price")),
+    "restock_dm": Msg(
+        "{{m_box}} <b>Back in stock</b>\n\n"
+        "{product}\n"
+        "{{g_price}} <b>{price}</b> · {{g_stock}} {stock} available\n\n"
+        "<i>First come, first served.</i>",
+        "Restock announcement (DM to buyers)", "Shop",
+        ("product", "price", "stock", "desc")),
+    "newproduct_dm": Msg(
+        "{{m_box}} <b>New in the shop</b>\n\n"
+        "{product}\n"
+        "{{g_price}} <b>{price}</b> · {{g_stock}} {stock} available\n\n"
+        "<i>Just added.</i>",
+        "New product announcement (DM to buyers)", "Shop",
+        ("product", "price", "stock", "desc")),
     "terms_body": Msg(
         "By using this shop you agree to the following:\n\n"
         "• All sales are final. Digital goods cannot be returned once delivered.\n"

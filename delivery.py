@@ -6,6 +6,7 @@ twice for the same order delivers once.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 
@@ -779,7 +780,7 @@ async def announce_restocks(bot: Bot) -> None:
             # everything that already exists counts as known, new or not
             await db.set_setting(f"restock:new:{pid}", "1")
             continue
-        if not chat or not in_stock:
+        if not in_stock:
             continue
 
         if not announced_new:
@@ -815,22 +816,77 @@ async def announce_restocks(bot: Bot) -> None:
                 added=added,
                 desc=f"\n<blockquote expandable>{_esc(desc)}</blockquote>\n"
                      if desc else "")
-            sent = await bot.send_message(
-                chat, await flair.render(body),
-                reply_markup=k.kb([k.url_btn(
-                    flair.label("buy", f"Buy {p['name']}"),
-                    f"https://t.me/{flair.BOT_USERNAME}?start=p_{pid}",
-                    style="primary", icon_slot="buy")]))
-            log.info("%s announced for product %s", kind, pid)
+            if chat:
+                sent = await bot.send_message(
+                    chat, await flair.render(body),
+                    reply_markup=k.kb([k.url_btn(
+                        flair.label("buy", f"Buy {p['name']}"),
+                        f"https://t.me/{flair.BOT_USERNAME}?start=p_{pid}",
+                        style="primary", icon_slot="buy")]))
+                log.info("%s announced for product %s", kind, pid)
 
-            # separate slots per kind, so a price drop replaces the last price
-            # drop rather than knocking the newest product off the pin bar
-            await _pin_announcement(bot, chat, sent.message_id, kind)
+                # separate slots per kind, so a price drop replaces the last
+                # price drop rather than knocking the newest product off the
+                # pin bar
+                await _pin_announcement(bot, chat, sent.message_id, kind)
         except Exception as e:
             log.warning("announcement failed for %s: %s", pid, e)
 
+        # The group post reaches whoever happens to be reading the group. The
+        # same news in DM reaches everyone who asked for stock alerts, which is
+        # most of the shop. Only the two that are actually news to a buyer go
+        # out this way — a price drop or a stock top-up on something already
+        # buyable does not justify a message to every user.
+        if kind in {"restock_group", "newproduct_group"}:
+            await _dm_announcement(bot, p, kind, avail)
+
     if first_run:
         await db.set_setting("restock:bootstrapped", "1")
+
+
+async def _dm_announcement(bot: Bot, p, kind: str, avail: int) -> None:
+    """DM a restock or new-product announcement to everyone who opted in.
+
+    No dedupe marker here on purpose. The caller's state machine already fires
+    each kind exactly once per event — `restock:instock` and `restock:new` are
+    written before anything is sent, so a crash partway through this fan-out
+    cannot replay it on the next tick. An earlier version added a marker keyed
+    on the stock count as belt-and-braces and it silently swallowed the second
+    restock of a product whenever the same number of units came back.
+    """
+    pid = p["id"]
+
+    # the waitlist gets notify_restock()'s tailored alert in this same tick
+    targets = await db.stock_alert_targets(exclude=await db.peek_watchers(pid))
+    if not targets:
+        return
+
+    desc = (p["description"] or "").strip()
+    if len(desc) > 400:
+        desc = desc[:400].rsplit(" ", 1)[0] + "…"
+    body = await texts.t(
+        "restock_dm" if kind == "restock_group" else "newproduct_dm",
+        product=flair.product_tag(p),
+        price=cfg.money(p["price"]),
+        stock="∞" if p["infinite"] else avail,
+        desc=f"\n<blockquote expandable>{_esc(desc)}</blockquote>\n" if desc else "")
+    text = await flair.render(body)
+    kb = k.kb([k.btn("🛒 Buy now", f"p:{pid}", style="primary")])
+
+    sent = blocked = failed = 0
+    for uid in targets:
+        try:
+            await bot.send_message(uid, text, reply_markup=kb)
+            sent += 1
+        except Exception as e:
+            # blocking the bot is an ordinary outcome at this scale, not a fault
+            if "blocked" in str(e).lower() or "chat not found" in str(e).lower():
+                blocked += 1
+            else:
+                failed += 1
+        await asyncio.sleep(0.05)               # ~20/s, inside Telegram's limit
+    log.info("%s DM for product %s — sent %d, blocked %d, failed %d",
+             kind, pid, sent, blocked, failed)
 
 
 async def _pin_announcement(bot: Bot, chat: str, msg_id: int,

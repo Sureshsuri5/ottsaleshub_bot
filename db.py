@@ -744,6 +744,23 @@ async def all_user_ids(promos_only: bool = False) -> list[int]:
     return [r["tg_id"] for r in await q(sql)]
 
 
+async def stock_alert_targets(exclude: Sequence[int] = ()) -> list[int]:
+    """Everyone who should hear about a restock in DM.
+
+    `notify_stock` is the switch buyers already have in Settings for exactly
+    this, so it governs here rather than notify_promos — a restock is not a
+    promo, and someone who muted promos still wants to know their product is
+    back.
+
+    `exclude` carries the waitlist for the product being announced. Those
+    people get the tailored "you asked to be told" alert from notify_restock()
+    in the same tick, and receiving both reads as a bug.
+    """
+    rows = await q("SELECT tg_id FROM users WHERE is_banned = 0 AND notify_stock = 1")
+    skip = set(exclude)
+    return [r["tg_id"] for r in rows if r["tg_id"] not in skip]
+
+
 async def activate(tg_id: int) -> None:
     await ex("UPDATE users SET activated = 1 WHERE tg_id = ?", (tg_id,))
 
@@ -1306,6 +1323,16 @@ async def is_watching(uid: int, pid: int) -> bool:
 async def watched_products() -> list[int]:
     rows = await q("SELECT DISTINCT product_id FROM waitlist")
     return [r["product_id"] for r in rows]
+
+
+async def peek_watchers(pid: int) -> list[int]:
+    """Who is waiting on this product, without clearing the list.
+
+    take_watchers() consumes the rows, which is right when the alert is being
+    sent but wrong when the caller only needs to know who to leave out.
+    """
+    rows = await q("SELECT user_id FROM waitlist WHERE product_id = ?", (pid,))
+    return [r["user_id"] for r in rows]
 
 
 async def take_watchers(pid: int) -> list[int]:
